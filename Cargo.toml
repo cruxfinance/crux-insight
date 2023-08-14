@@ -1,0 +1,13 @@
+[workspace]
+
+members = [
+    "chain-indexer",
+    "ergo-node-client",
+    "spectrum-insight"
+]
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+ergo-node-client = { version = "^5.0.12", path = "./ergo-node-client" }

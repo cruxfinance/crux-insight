@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  chain_indexer:
+    image: chain-indexer
+    container_name: chain_indexer
+    env_file: .env
+    build:
+      context: .
+      dockerfile: ./chain-indexer/Dockerfile
+    restart: unless-stopped
+    networks:
+      - crux-net
+  postgres:
+    image: postgres:15
+    container_name: cruxinsight-db
+    env_file: .env
+    volumes:
+      - ./data:/var/lib/postgresql/data
+      - ./sql/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5466:5432"
+    restart: unless-stopped
+    networks:
+      - crux-net
+
+networks:
+  crux-net:
+    driver: bridge
