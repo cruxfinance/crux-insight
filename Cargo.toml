@@ -2,8 +2,7 @@
 
 members = [
     "chain-indexer",
-    "ergo-node-client",
-    "spectrum-insight"
+    "ergo-node-client"
 ]
 
 [workspace.package]
