@@ -102,66 +102,53 @@ pub async fn fetch_headers(
             .map(|item| item.as_str().unwrap_or("invalid text"))
             .collect::<Vec<&str>>()[1];
         debug!("{}", header_id);
-        let mut header_found = false;
-        let mut retries = 5;
-        while !header_found {
-            let mut success = false;
-            while !success {
-                let headers_res =
-                    blocks_api::get_chain_slice(&node_conf, Some(offset), Some(offset + limit))
-                        .await;
-                match headers_res {
-                    Ok(headers) => {
-                        offset += headers.len() as i32;
-                        for header in headers.iter() {
-                            if header.parent_id == last_header_id {
-                                last_header_id = header.id.clone();
-                                match sender
-                                    .send(WorkBlock {
-                                        zmq_mode: true,
-                                        header: Some(header.clone()),
-                                        transactions: None,
-                                        rollback_height: None,
-                                    })
-                                    .await
-                                {
-                                    Ok(_) => (),
-                                    Err(e) => panic!("{}", e),
-                                }
-                                if header.id.eq(header_id) {
-                                    header_found = true;
-                                    debug!("Found header");
-                                }
-                                success = true;
-                            } else {
-                                offset = header.height - 10;
-                                last_header_id = get_header_id(&settings, offset).await;
-                                match sender
-                                    .send(WorkBlock {
-                                        zmq_mode: true,
-                                        header: None,
-                                        transactions: None,
-                                        rollback_height: Some(offset),
-                                    })
-                                    .await
-                                {
-                                    Ok(_res) => break,
-                                    Err(error) => panic!("{}", error),
-                                }
+
+        let mut success = false;
+        while !success {
+            let headers_res =
+                blocks_api::get_chain_slice(&node_conf, Some(offset), Some(offset + limit)).await;
+            match headers_res {
+                Ok(headers) => {
+                    offset += headers.len() as i32;
+                    for header in headers.iter() {
+                        if header.parent_id == last_header_id {
+                            last_header_id = header.id.clone();
+                            match sender
+                                .send(WorkBlock {
+                                    zmq_mode: true,
+                                    header: Some(header.clone()),
+                                    transactions: None,
+                                    rollback_height: None,
+                                })
+                                .await
+                            {
+                                Ok(_) => (),
+                                Err(e) => panic!("{}", e),
+                            }
+
+                            success = true;
+                        } else {
+                            offset = header.height - 10;
+                            last_header_id = get_header_id(&settings, offset).await;
+                            match sender
+                                .send(WorkBlock {
+                                    zmq_mode: true,
+                                    header: None,
+                                    transactions: None,
+                                    rollback_height: Some(offset),
+                                })
+                                .await
+                            {
+                                Ok(_res) => break,
+                                Err(error) => panic!("{}", error),
                             }
                         }
                     }
-                    Err(e) => {
-                        error!("{}", e);
-                        tokio::time::sleep(Duration::new(1, 0)).await;
-                    }
                 }
-            }
-            if !header_found && retries > 0 {
-                tokio::time::sleep(Duration::new(0, 200000)).await;
-                retries -= 1;
-            } else {
-                header_found = true;
+                Err(e) => {
+                    error!("{}", e);
+                    tokio::time::sleep(Duration::new(1, 0)).await;
+                }
             }
         }
     }
