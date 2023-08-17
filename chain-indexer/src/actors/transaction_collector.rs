@@ -30,7 +30,7 @@ pub async fn collect_transactions(
                 }
             }
             Some(rollback_height) => {
-                current_height = rollback_height;
+                current_height = rollback_height + 1;
                 match sender.send(work_block.clone()).await {
                     Ok(_) => (),
                     Err(e) => panic!("{}", e),
