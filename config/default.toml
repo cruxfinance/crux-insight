@@ -11,3 +11,6 @@ db = "lagerg"
 
 [chain_indexer]
 tx_par = 10
+
+[crux]
+pubsubport = 8765

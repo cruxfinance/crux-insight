@@ -8,6 +8,8 @@ services:
       context: .
       dockerfile: ./chain-indexer/Dockerfile
     restart: unless-stopped
+    ports:
+      - "8765:8765"
     networks:
       - crux-net
   postgres:

@@ -11,10 +11,12 @@ use ergo_lib::ergotree_ir::{
     mir::constant::TryExtractInto,
     serialization::SigmaSerializable,
 };
+use futures::SinkExt;
 use sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter,
     QueryOrder, Set, TransactionTrait, Value,
 };
+use tmq::{publish, Context};
 use tokio::sync::mpsc::Receiver;
 use tracing::info;
 
@@ -32,6 +34,10 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
     }
     .connect()
     .await;
+
+    let mut socket = publish(&Context::new())
+        .bind(&format!("tcp://0.0.0.0:{}", &settings.crux.pubsubport))
+        .unwrap();
 
     let mut current_time = SystemTime::now();
 
@@ -468,7 +474,8 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                     info!(
                         "Inserted block with height: {} and header: {}",
                         header.height, header.id
-                    )
+                    );
+                    let _ = socket.send(vec!["new_block", &header.id]).await;
                 }
             }
         }

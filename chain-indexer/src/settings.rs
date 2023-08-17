@@ -26,10 +26,17 @@ pub struct ChainIndexer {
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
+pub struct Crux {
+    pub pubsubport: i32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
 pub struct Settings {
     pub database: Database,
     pub ergo_node: ErgoNode,
     pub chain_indexer: ChainIndexer,
+    pub crux: Crux,
 }
 
 impl Settings {
