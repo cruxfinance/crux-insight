@@ -97,6 +97,9 @@ pub async fn fetch_headers(
 
     loop {
         let msg_mp = socket.next().await.unwrap().unwrap();
+        if sender.receiver_count() < 1 {
+            panic!("No more receivers.")
+        }
         let header_id = msg_mp
             .iter()
             .map(|item| item.as_str().unwrap_or("invalid text"))
