@@ -1,7 +1,7 @@
 # Stage 1: Build the Rust project
 FROM rust:slim-bullseye as builder
 
-RUN apt-get update && apt-get install -y pkg-config openssl libssl-dev
+RUN apt-get update && apt-get install -y pkg-config openssl libssl-dev build-essential
 
 # Create a new directory to copy the source code into
 WORKDIR /app
