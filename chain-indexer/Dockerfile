@@ -1,5 +1,7 @@
 # Stage 1: Build the Rust project
-FROM rust:latest as builder
+FROM rust:slim-bullseye as builder
+
+RUN apt-get update && apt-get install -y pkg-config openssl libssl-dev
 
 # Create a new directory to copy the source code into
 WORKDIR /app
@@ -12,6 +14,8 @@ RUN cargo build --release --package chain-indexer
 
 # Stage 2: Create the final lightweight image
 FROM debian:bullseye-slim
+
+RUN apt-get update && apt-get install -y ca-certificates openssl libssl-dev
 
 # Set the working directory
 WORKDIR /app
