@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
         current_max_db_height = 0;
     }
 
-    tokio::spawn(async move {
+    let thr = tokio::spawn(async move {
         insert_data(blockchain_data_rx).await;
     });
 
@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    let thr = tokio::spawn(async move {
+    tokio::spawn(async move {
         fetch_headers(
             &node_conf,
             current_max_db_height,
