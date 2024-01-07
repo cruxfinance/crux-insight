@@ -198,9 +198,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                             ..utxo
                         };
                         updated_boxes.push(spent_txo.id.to_owned());
-                        if !work_block.zmq_mode {
-                            box_cached.cache_set(input.box_id.to_owned(), spent_txo.to_owned());
-                        }
+                        box_cached.cache_set(input.box_id.to_owned(), spent_txo.to_owned());
                         let inp = entities::inputs::Model {
                             id: current_input_id,
                             box_id: box_cached.cache_get(&input.box_id).to_owned().unwrap().id,
@@ -268,9 +266,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                             id: current_box_id,
                         };
                         new_boxes.push(new_box.to_owned().into_active_model());
-                        if !work_block.zmq_mode {
-                            box_cached.cache_set(new_box.box_id.to_owned(), new_box.to_owned());
-                        }
+                        box_cached.cache_set(new_box.box_id.to_owned(), new_box.to_owned());
                         let mut asset_index = 0;
                         for ass in outp.assets.to_owned().unwrap().iter() {
                             current_token_in_box_id += 1;
