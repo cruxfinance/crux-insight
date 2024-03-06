@@ -121,6 +121,21 @@ async fn main() -> Result<()> {
             index += 1;
             txo.insert(&db).await?;
         }
+
+        info!("Inserting erg into tokens table");
+        let erg_token = entities::tokens::ActiveModel {
+            id: Set(0),
+            token_id: Set(
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            ),
+            token_name: Set("erg".to_string()),
+            token_description: Set("Ergo coin".to_string()),
+            issuer_box: Set(0),
+            issuance_box: Set(0),
+            decimals: Set(Some(9)),
+            minted: Set(Some(97739924000000000)),
+        };
+        erg_token.insert(&db).await?;
         current_max_db_height = 0;
     }
 

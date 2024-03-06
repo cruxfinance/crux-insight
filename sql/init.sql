@@ -2,10 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 15.1 (Debian 15.1-1.pgdg110+1)
--- Dumped by pg_dump version 15.4 (Ubuntu 15.4-1.pgdg22.04+1)
-
--- Started on 2023-08-14 14:20:55 CEST
+-- Dumped from database version 15.2 (Debian 15.2-1.pgdg110+1)
+-- Dumped by pg_dump version 16.1 (Ubuntu 16.1-1.pgdg22.04+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -18,13 +16,137 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+--
+-- Name: public; Type: SCHEMA; Schema: -; Owner: pg_database_owner
+--
+
+CREATE SCHEMA public;
+
+
+ALTER SCHEMA public OWNER TO pg_database_owner;
+
+--
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: pg_database_owner
+--
+
+COMMENT ON SCHEMA public IS 'standard public schema';
+
+
+--
+-- Name: token; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.token AS (
+	amount bigint,
+	"tokenId" text
+);
+
+
+ALTER TYPE public.token OWNER TO postgres;
+
+--
+-- Name: get_token_info(bigint, bigint); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_token_info(t_id bigint, t_amount bigint) RETURNS TABLE(token_info json)
+    LANGUAGE plpgsql STABLE COST 200000 PARALLEL SAFE
+    AS $$
+BEGIN
+RETURN QUERY
+WITH liquidity_pool as (
+	select * from spectrum.spectrum_boxes where box_id = (select max(box_id) from spectrum.spectrum_boxes where quote_id = t_id) order by erg_value desc limit 1
+)
+select row_to_json(t_info.*) 
+from (
+select 
+	t_amount as token_amount,
+	ARRAY(SELECT public.get_wrapped_tokens(
+		t.id,
+		t_amount
+	)) as wrapped_tokens,
+	t.*, 
+	coalesce(
+		case when t_id = 0 then 1 else null end,
+		(lp.base_amount/10^9)/(lp.quote_amount/10^t.decimals),
+		0
+	) as value_in_erg
+from	
+public.tokens t
+left join liquidity_pool lp on lp.quote_id = t.id
+where t.id = t_id
+) t_info;
+
+END;
+$$;
+
+
+ALTER FUNCTION public.get_token_info(t_id bigint, t_amount bigint) OWNER TO postgres;
+
+--
+-- Name: get_token_supply(bigint); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_token_supply(t_id bigint) RETURNS TABLE(non_circulating bigint, liquid bigint, locked bigint)
+    LANGUAGE plpgsql STABLE COST 200000 PARALLEL SAFE
+    AS $$
+BEGIN
+RETURN QUERY
+with non_circ as (
+	select id from public.addresses a where address in (
+		'9hXmgvzndtakdSAgJ92fQ8ZjuKirWAw8tyDuyJrXP6sKHVpCz8XbMANK3BVJ1k3WD6ovQKTCasjKL5WMncRB6V9HvmMnJ2WbxYYjtLFS9sifDNXJWugrNEgoVK887bR5oaLZA95yGkMeXVfanxpNDZYaXH9KpHCpC5ohDtaW1PF17b27559toGVCeCUNti7LXyXV8fWS1mVRuz2PhLq5mB7hg2bqn7CZtVM8ntbUJpjkHUc9cP1R8Gvbo1GqcNWgM7gZkr2Dp514BrFz1cXMkv7TYEqH3cdxX9c82hH6fdaf3n6avdtZ5bgqerUZVDDW6ZsqxrqTyTMQUUirRAi3odmMGmuMqDJbU3Z1VnCF9NBow7jrKUDSgckDZakFZNChsr5Kq1kQyNitYJUh9fra1jLHCQ9yekz3te9E'
+	,'HNLdwoHRsUSevguzRajzvy1DLAvUJ9YgQezQq6GGZiY4TmU9VDs2ae8mRpQkfEnLmuUKyJibZD2bXR2yoo1p8T5WCRKPn4rJVJ2VR2LvRBk8ViCmhcume5ubWaySXTUqpftEaaURTM6KSFxe4QbRFbToyPzZ3JJmjoDn4WzHh5ioXZMj7AX6xTwJvFmzPuko9BqDk5z1RJtD1wP4kd8sSsLN9P2YNQxmUGDEBYHaDCoAhY7Pg5oKit6ZyqMynoiycWqctfg1EHhMUKCTJsZNnidU961ri98RaYP4CfEwYQ3d9dRVuC6S1n7J1wPPHYqmUBgJCGWbTULayXUowSSmRuZUkQYGo9vvNaEpB7ManiLsX1n8cBYwN4XoVsY24mCfptBP86P4rZ5fgcr9mYtQ9nG934DMDZBbjs81VzCupB6KVrGCe1WtYSr6c1DwkNAinBMwqcqxTznXZUvfBsjDSCtJzCut44xcc7Zsy9mWz2B2pqhdKsX83BVzMDDM5hnjXTShYfauJGs81'
+	,'MUbV38YgqHy7XbsoXWF5z7EZm524Ybdwe5p9WDrbhruZRtehkRPT92imXer2eTkjwPDfboa1pR3zb3deVKVq3H7Xt98qcTqLuSBSbHb7izzo5jphEpcnqyKJ2xhmpNPVvmtbdJNdvdopPrHHDBbAGGeW7XYTQwEeoRfosXzcDtiGgw97b2aqjTsNFmZk7khBEQywjYfmoDc9nUCJMZ3vbSspnYo3LarLe55mh2Np8MNJqUN9APA6XkhZCrTTDRZb1B4krgFY1sVMswg2ceqguZRvC9pqt3tUUxmSnB24N6dowfVJKhLXwHPbrkHViBv1AKAJTmEaQW2DN1fRmD9ypXxZk8GXmYtxTtrj3BiunQ4qzUCu1eGzxSREjpkFSi2ATLSSDqUwxtRz639sHM6Lav4axoJNPCHbY8pvuBKUxgnGRex8LEGM8DeEJwaJCaoy8dBw9Lz49nq5mSsXLeoC4xpTUmp47Bh7GAZtwkaNreCu74m9rcZ8Di4w1cmdsiK1NWuDh9pJ2Bv7u3EfcurHFVqCkT3P86JUbKnXeNxCypfrWsFuYNKYqmjsix82g9vWcGMmAcu5nagxD4iET86iE2tMMfZZ5vqZNvntQswJyQqv2Wc6MTh4jQx1q2qJZCQe4QdEK63meTGbZNNKMctHQbp3gRkZYNrBtxQyVtNLR8xEY8zGp85GeQKbb37vqLXxRpGiigAdMe3XZA4hhYPmAAU5hpSMYaRAjtvvMT3bNiHRACGrfjvSsEG9G2zY5in2YWz5X9zXQLGTYRsQ4uNFkYoQRCBdjNxGv6R58Xq74zCgt19TxYZ87gPWxkXpWwTaHogG1eps8WXt8QzwJ9rVx6Vu9a5GjtcGsQxHovWmYixgBU8X9fPNJ9UQhYyAWbjtRSuVBtDAmoV1gCBEPwnYVP5GCGhCocbwoYhZkZjFZy6ws4uxVLid3FxuvhWvQrVEDYp7WRvGXbNdCbcSXnbeTrPMey1WPaXX'
+	)
+)
+select 
+sum(case when addr_type = 0 then token_amount else 0 end)::bigint as non_circulating_supply,
+sum(case when addr_type = 1 then token_amount else 0 end)::bigint as liquid_supply,
+sum(case when addr_type = 2 then token_amount else 0 end)::bigint as locked_supply
+from (
+select aib.*,
+(case when aib.address = any(select id from non_circ) then 0
+when length(a.address) = 51 and starts_with(a.address, '9') then 1
+else 2
+end) as addr_type
+from public.asset_in_box aib 
+join public.addresses a on a.id = aib.address
+where aib.token_id = t_id
+and aib.spent is null
+) as main;
+
+END;
+$$;
+
+
+ALTER FUNCTION public.get_token_supply(t_id bigint) OWNER TO postgres;
+
+--
+-- Name: get_wrapped_tokens(bigint, bigint); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.get_wrapped_tokens(t_id bigint, t_amount bigint) RETURNS TABLE(wrapped_tokens json)
+    LANGUAGE plpgsql STABLE PARALLEL SAFE
+    AS $$
+BEGIN
+RETURN QUERY
+select T.token_info from (
+select get_token_info(wrapped_token_id, round(t_amount*wrapped_amount)::bigint) as token_info
+from public.wrapped
+where token_id = t_id
+and box_id = (select max(box_id) from public.wrapped where token_id = t_id)
+and timepoint = (select max(timepoint) from public.wrapped where token_id = t_id)
+) T;
+END;
+$$;
+
+
+ALTER FUNCTION public.get_wrapped_tokens(t_id bigint, t_amount bigint) OWNER TO postgres;
 
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- TOC entry 217 (class 1259 OID 58504)
 -- Name: addresses; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -39,7 +161,46 @@ CREATE TABLE public.addresses (
 ALTER TABLE public.addresses OWNER TO postgres;
 
 --
--- TOC entry 215 (class 1259 OID 58485)
+-- Name: asset_in_box; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.asset_in_box (
+    id bigint NOT NULL,
+    box_id bigint NOT NULL,
+    transaction_id bigint NOT NULL,
+    token_id bigint NOT NULL,
+    token_amount bigint NOT NULL,
+    address bigint NOT NULL,
+    created integer NOT NULL,
+    spent integer,
+    index integer
+);
+
+
+ALTER TABLE public.asset_in_box OWNER TO postgres;
+
+--
+-- Name: asset_in_:box_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public."asset_in_:box_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public."asset_in_:box_id_seq" OWNER TO postgres;
+
+--
+-- Name: asset_in_:box_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public."asset_in_:box_id_seq" OWNED BY public.asset_in_box.id;
+
+
+--
 -- Name: blocks; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -54,7 +215,6 @@ CREATE TABLE public.blocks (
 ALTER TABLE public.blocks OWNER TO postgres;
 
 --
--- TOC entry 216 (class 1259 OID 58495)
 -- Name: boxes; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -72,7 +232,6 @@ CREATE TABLE public.boxes (
 ALTER TABLE public.boxes OWNER TO postgres;
 
 --
--- TOC entry 220 (class 1259 OID 58531)
 -- Name: data_inputs; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -87,7 +246,6 @@ CREATE TABLE public.data_inputs (
 ALTER TABLE public.data_inputs OWNER TO postgres;
 
 --
--- TOC entry 219 (class 1259 OID 58522)
 -- Name: inputs; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -103,7 +261,6 @@ CREATE TABLE public.inputs (
 ALTER TABLE public.inputs OWNER TO postgres;
 
 --
--- TOC entry 222 (class 1259 OID 58547)
 -- Name: token_in_box; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -119,7 +276,6 @@ CREATE TABLE public.token_in_box (
 ALTER TABLE public.token_in_box OWNER TO postgres;
 
 --
--- TOC entry 221 (class 1259 OID 58538)
 -- Name: tokens; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -138,7 +294,6 @@ CREATE TABLE public.tokens (
 ALTER TABLE public.tokens OWNER TO postgres;
 
 --
--- TOC entry 218 (class 1259 OID 58513)
 -- Name: transactions; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -152,7 +307,59 @@ CREATE TABLE public.transactions (
 ALTER TABLE public.transactions OWNER TO postgres;
 
 --
--- TOC entry 3222 (class 2606 OID 58511)
+-- Name: wrapped; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.wrapped (
+    id bigint NOT NULL,
+    box_id bigint NOT NULL,
+    token_id bigint NOT NULL,
+    wrapped_token_id bigint NOT NULL,
+    wrapped_amount double precision NOT NULL,
+    type text NOT NULL,
+    sub_type text,
+    timepoint timestamp without time zone NOT NULL
+);
+
+
+ALTER TABLE public.wrapped OWNER TO postgres;
+
+--
+-- Name: wrapped_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.wrapped_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.wrapped_id_seq OWNER TO postgres;
+
+--
+-- Name: wrapped_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.wrapped_id_seq OWNED BY public.wrapped.id;
+
+
+--
+-- Name: asset_in_box id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.asset_in_box ALTER COLUMN id SET DEFAULT nextval('public."asset_in_:box_id_seq"'::regclass);
+
+
+--
+-- Name: wrapped id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.wrapped ALTER COLUMN id SET DEFAULT nextval('public.wrapped_id_seq'::regclass);
+
+
+--
 -- Name: addresses addresses_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -161,7 +368,14 @@ ALTER TABLE ONLY public.addresses
 
 
 --
--- TOC entry 3212 (class 2606 OID 58491)
+-- Name: asset_in_box asset_in_:box_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.asset_in_box
+    ADD CONSTRAINT "asset_in_:box_pkey" PRIMARY KEY (id);
+
+
+--
 -- Name: blocks blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -170,7 +384,6 @@ ALTER TABLE ONLY public.blocks
 
 
 --
--- TOC entry 3215 (class 2606 OID 58502)
 -- Name: boxes boxes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -179,7 +392,6 @@ ALTER TABLE ONLY public.boxes
 
 
 --
--- TOC entry 3232 (class 2606 OID 58536)
 -- Name: data_inputs data_inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -188,7 +400,6 @@ ALTER TABLE ONLY public.data_inputs
 
 
 --
--- TOC entry 3230 (class 2606 OID 58529)
 -- Name: inputs inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -197,7 +408,6 @@ ALTER TABLE ONLY public.inputs
 
 
 --
--- TOC entry 3241 (class 2606 OID 58552)
 -- Name: token_in_box token_in_box_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -206,7 +416,6 @@ ALTER TABLE ONLY public.token_in_box
 
 
 --
--- TOC entry 3236 (class 2606 OID 58545)
 -- Name: tokens tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -215,7 +424,6 @@ ALTER TABLE ONLY public.tokens
 
 
 --
--- TOC entry 3227 (class 2606 OID 58520)
 -- Name: transactions transactions_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -224,7 +432,49 @@ ALTER TABLE ONLY public.transactions
 
 
 --
--- TOC entry 3216 (class 1259 OID 169015)
+-- Name: wrapped wrapped_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.wrapped
+    ADD CONSTRAINT wrapped_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: asset_in_box_address_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX asset_in_box_address_idx ON public.asset_in_box USING btree (address, spent);
+
+
+--
+-- Name: asset_in_box_spent_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX asset_in_box_spent_idx ON public.asset_in_box USING btree (spent);
+
+
+--
+-- Name: asset_in_box_token_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX asset_in_box_token_id_idx ON public.asset_in_box USING btree (token_id, spent, created);
+
+
+--
+-- Name: asset_in_box_transaction_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX asset_in_box_transaction_id_idx ON public.asset_in_box USING btree (transaction_id);
+
+
+--
+-- Name: boxes_spent_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX boxes_spent_idx ON public.boxes USING btree (spent, id);
+
+
+--
 -- Name: fki_fk_boxes_created; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -232,7 +482,6 @@ CREATE INDEX fki_fk_boxes_created ON public.boxes USING btree (created);
 
 
 --
--- TOC entry 3217 (class 1259 OID 169021)
 -- Name: fki_fk_boxes_spent; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -240,7 +489,6 @@ CREATE INDEX fki_fk_boxes_spent ON public.boxes USING btree (spent);
 
 
 --
--- TOC entry 3228 (class 1259 OID 2871134)
 -- Name: fki_inputs__transactions_fk; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -248,7 +496,6 @@ CREATE INDEX fki_inputs__transactions_fk ON public.inputs USING btree (transacti
 
 
 --
--- TOC entry 3237 (class 1259 OID 2871152)
 -- Name: fki_token_in_box__boxes_fk; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -256,7 +503,6 @@ CREATE INDEX fki_token_in_box__boxes_fk ON public.token_in_box USING btree (box_
 
 
 --
--- TOC entry 3233 (class 1259 OID 2871140)
 -- Name: fki_tokens__boxes_fk; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -264,7 +510,6 @@ CREATE INDEX fki_tokens__boxes_fk ON public.tokens USING btree (issuance_box);
 
 
 --
--- TOC entry 3225 (class 1259 OID 2871146)
 -- Name: fki_transactions__blocks_fk; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -272,7 +517,6 @@ CREATE INDEX fki_transactions__blocks_fk ON public.transactions USING btree (hei
 
 
 --
--- TOC entry 3223 (class 1259 OID 1352195)
 -- Name: idx_addresses_address; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -280,7 +524,6 @@ CREATE INDEX idx_addresses_address ON public.addresses USING hash (address);
 
 
 --
--- TOC entry 3224 (class 1259 OID 1352194)
 -- Name: idx_addresses_ergotree; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -288,7 +531,13 @@ CREATE INDEX idx_addresses_ergotree ON public.addresses USING hash (ergotree);
 
 
 --
--- TOC entry 3213 (class 1259 OID 1452232)
+-- Name: idx_asset_in_box__box_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_asset_in_box__box_id ON public.asset_in_box USING btree (box_id);
+
+
+--
 -- Name: idx_blocks_timestamp; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -296,7 +545,20 @@ CREATE INDEX idx_blocks_timestamp ON public.blocks USING btree ("timestamp");
 
 
 --
--- TOC entry 3218 (class 1259 OID 169009)
+-- Name: idx_boxes__transaction; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_boxes__transaction ON public.boxes USING btree (transaction_id);
+
+
+--
+-- Name: idx_boxes_address_box_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_boxes_address_box_id ON public.boxes USING btree (address, id);
+
+
+--
 -- Name: idx_boxes_address_created_spent; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -304,7 +566,6 @@ CREATE INDEX idx_boxes_address_created_spent ON public.boxes USING btree (addres
 
 
 --
--- TOC entry 3219 (class 1259 OID 169008)
 -- Name: idx_boxes_box_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -312,7 +573,13 @@ CREATE UNIQUE INDEX idx_boxes_box_id ON public.boxes USING btree (box_id);
 
 
 --
--- TOC entry 3220 (class 1259 OID 1448507)
+-- Name: idx_boxes_box_id_spent; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE UNIQUE INDEX idx_boxes_box_id_spent ON public.boxes USING btree (box_id, spent);
+
+
+--
 -- Name: idx_id_created_spent; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -320,7 +587,13 @@ CREATE INDEX idx_id_created_spent ON public.boxes USING btree (id, created, spen
 
 
 --
--- TOC entry 3238 (class 1259 OID 1246542)
+-- Name: idx_token_id_box_id; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_token_id_box_id ON public.wrapped USING btree (token_id, box_id DESC);
+
+
+--
 -- Name: idx_token_in_box_box_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -328,7 +601,6 @@ CREATE INDEX idx_token_in_box_box_id ON public.token_in_box USING btree (box_id)
 
 
 --
--- TOC entry 3239 (class 1259 OID 1251133)
 -- Name: idx_token_in_box_token_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -336,7 +608,13 @@ CREATE INDEX idx_token_in_box_token_id ON public.token_in_box USING btree (token
 
 
 --
--- TOC entry 3234 (class 1259 OID 169022)
+-- Name: idx_wrapped_type_sub_type; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_wrapped_type_sub_type ON public.wrapped USING btree (type, sub_type, timepoint);
+
+
+--
 -- Name: idz_tokens_token_id; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -344,7 +622,36 @@ CREATE UNIQUE INDEX idz_tokens_token_id ON public.tokens USING btree (token_id);
 
 
 --
--- TOC entry 3242 (class 2606 OID 169010)
+-- Name: inputs_box_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX inputs_box_id_idx ON public.inputs USING btree (box_id);
+
+
+--
+-- Name: wrapped_token_id_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX wrapped_token_id_idx ON public.wrapped USING btree (token_id, timepoint);
+
+
+--
+-- Name: asset_in_box asset_in_box_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.asset_in_box
+    ADD CONSTRAINT asset_in_box_fk FOREIGN KEY (box_id) REFERENCES public.boxes(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: asset_in_box asset_in_box_spent_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.asset_in_box
+    ADD CONSTRAINT asset_in_box_spent_fk FOREIGN KEY (spent) REFERENCES public.blocks(height) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
 -- Name: boxes fk_boxes_created; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -353,7 +660,6 @@ ALTER TABLE ONLY public.boxes
 
 
 --
--- TOC entry 3243 (class 2606 OID 169016)
 -- Name: boxes fk_boxes_spent; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -362,7 +668,6 @@ ALTER TABLE ONLY public.boxes
 
 
 --
--- TOC entry 3245 (class 2606 OID 2871129)
 -- Name: inputs inputs__transactions_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -371,7 +676,6 @@ ALTER TABLE ONLY public.inputs
 
 
 --
--- TOC entry 3247 (class 2606 OID 2871147)
 -- Name: token_in_box token_in_box__boxes_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -380,7 +684,6 @@ ALTER TABLE ONLY public.token_in_box
 
 
 --
--- TOC entry 3246 (class 2606 OID 2871135)
 -- Name: tokens tokens__boxes_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -389,7 +692,6 @@ ALTER TABLE ONLY public.tokens
 
 
 --
--- TOC entry 3244 (class 2606 OID 2871141)
 -- Name: transactions transactions__blocks_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -397,7 +699,29 @@ ALTER TABLE ONLY public.transactions
     ADD CONSTRAINT transactions__blocks_fk FOREIGN KEY (height) REFERENCES public.blocks(height) ON UPDATE CASCADE ON DELETE CASCADE NOT VALID;
 
 
--- Completed on 2023-08-14 14:20:55 CEST
+--
+-- Name: wrapped wrapped_box_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.wrapped
+    ADD CONSTRAINT wrapped_box_id_fkey FOREIGN KEY (box_id) REFERENCES public.boxes(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: wrapped wrapped_token_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.wrapped
+    ADD CONSTRAINT wrapped_token_id_fkey FOREIGN KEY (token_id) REFERENCES public.tokens(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: wrapped wrapped_wrapped_token_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.wrapped
+    ADD CONSTRAINT wrapped_wrapped_token_id_fkey FOREIGN KEY (wrapped_token_id) REFERENCES public.tokens(id);
+
 
 --
 -- PostgreSQL database dump complete
