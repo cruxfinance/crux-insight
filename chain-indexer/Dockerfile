@@ -23,6 +23,7 @@ WORKDIR /app
 # Copy the compiled binaries from the builder stage
 COPY --from=builder /app/target/release/chain-indexer /app/
 COPY --from=builder /app/config /app/config
+COPY --from=builder /app/local.toml /app/local.toml
 
 # Specify the default command to run when the container starts
 CMD ["./chain-indexer"]

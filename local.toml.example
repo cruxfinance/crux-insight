@@ -1,0 +1,6 @@
+[ergo_node]
+url = "http://192.168.1.23:9053"
+zmq_url = "tcp://192.168.1.23:9060"
+
+[crux]
+pubsubport = 8765
