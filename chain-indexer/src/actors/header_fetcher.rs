@@ -4,6 +4,8 @@ use ergo_node_client::apis::{blocks_api, configuration::Configuration};
 use futures::StreamExt;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tmq::{subscribe, Context};
+use tokio::sync::mpsc::Sender;
+use tokio::time::sleep;
 use tracing::{debug, error, info};
 
 use crate::database::CIDatabase;
@@ -33,12 +35,12 @@ pub async fn fetch_headers(
     node_conf: &Configuration,
     from: i32,
     to: i32,
-    sender: async_channel::Sender<WorkBlock>,
+    sender: Sender<Vec<WorkBlock>>,
 ) {
     let settings = Settings::new().unwrap();
     let mut last_header_id = get_header_id(&settings, from).await;
     let mut offset = from;
-    let limit = 200;
+    let limit = 10;
     while offset < to {
         let headers_res =
             blocks_api::get_chain_slice(&node_conf, Some(offset), Some(min(offset + limit, to)))
@@ -46,46 +48,46 @@ pub async fn fetch_headers(
         match headers_res {
             Ok(headers) => {
                 offset += headers.len() as i32;
-                for header in headers.iter() {
-                    if header.parent_id == last_header_id {
-                        last_header_id = header.id.clone();
-                        if header.height % 1000 == 0 {
-                            debug!(
-                                "Header channel size: {}",
-                                (&sender.capacity().unwrap() - &sender.len())
-                            );
-                        }
-                        match sender
-                            .send(WorkBlock {
-                                zmq_mode: false,
-                                header: Some(header.clone()),
-                                transactions: None,
-                                rollback_height: None,
-                            })
-                            .await
-                        {
-                            Ok(_res) => continue,
-                            Err(error) => panic!("{}", error),
-                        }
-                    } else {
-                        offset = header.height - 10;
-                        last_header_id = get_header_id(&settings, offset).await;
-                        match sender
-                            .send(WorkBlock {
-                                zmq_mode: false,
-                                header: None,
-                                transactions: None,
-                                rollback_height: Some(offset),
-                            })
-                            .await
-                        {
-                            Ok(_res) => break,
-                            Err(error) => panic!("{}", error),
-                        }
+                if headers.first().unwrap().parent_id == last_header_id {
+                    last_header_id = headers.last().unwrap().id.clone();
+                    match sender
+                        .send(
+                            headers
+                                .iter()
+                                .map(|header| WorkBlock {
+                                    zmq_mode: false,
+                                    header: Some(header.clone()),
+                                    transactions: None,
+                                    rollback_height: None,
+                                })
+                                .collect(),
+                        )
+                        .await
+                    {
+                        Ok(_res) => continue,
+                        Err(error) => panic!("{}", error),
+                    }
+                } else {
+                    offset = headers.first().unwrap().height - 10;
+                    last_header_id = get_header_id(&settings, offset).await;
+                    match sender
+                        .send(vec![WorkBlock {
+                            zmq_mode: false,
+                            header: None,
+                            transactions: None,
+                            rollback_height: Some(offset),
+                        }])
+                        .await
+                    {
+                        Ok(_res) => (),
+                        Err(error) => panic!("{}", error),
                     }
                 }
             }
-            Err(e) => panic!("{}", e),
+            Err(e) => {
+                error!("{}", e);
+                sleep(Duration::from_millis(1000_u64)).await;
+            }
         }
     }
     info!("Done fetching headers, switching to zmq mode");
@@ -97,7 +99,7 @@ pub async fn fetch_headers(
 
     loop {
         let msg_mp = socket.next().await.unwrap().unwrap();
-        if sender.receiver_count() < 1 {
+        if sender.is_closed() {
             panic!("No more receivers.")
         }
         let header_id = msg_mp
@@ -117,12 +119,12 @@ pub async fn fetch_headers(
                         if header.parent_id == last_header_id {
                             last_header_id = header.id.clone();
                             match sender
-                                .send(WorkBlock {
+                                .send(vec![WorkBlock {
                                     zmq_mode: true,
                                     header: Some(header.clone()),
                                     transactions: None,
                                     rollback_height: None,
-                                })
+                                }])
                                 .await
                             {
                                 Ok(_) => (),
@@ -134,12 +136,12 @@ pub async fn fetch_headers(
                             offset = header.height - 10;
                             last_header_id = get_header_id(&settings, offset).await;
                             match sender
-                                .send(WorkBlock {
+                                .send(vec![WorkBlock {
                                     zmq_mode: true,
                                     header: None,
                                     transactions: None,
                                     rollback_height: Some(offset),
-                                })
+                                }])
                                 .await
                             {
                                 Ok(_res) => break,

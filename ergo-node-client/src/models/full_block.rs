@@ -10,8 +10,6 @@
 
 /// FullBlock : Block with header and transactions
 
-
-
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct FullBlock {
     #[serde(rename = "header")]
@@ -19,7 +17,7 @@ pub struct FullBlock {
     #[serde(rename = "blockTransactions")]
     pub block_transactions: Box<crate::models::BlockTransactions>,
     #[serde(rename = "adProofs")]
-    pub ad_proofs: Box<crate::models::BlockAdProofs>,
+    pub ad_proofs: Box<Option<crate::models::BlockAdProofs>>,
     #[serde(rename = "extension")]
     pub extension: Box<crate::models::Extension>,
     /// Size in bytes
@@ -29,7 +27,13 @@ pub struct FullBlock {
 
 impl FullBlock {
     /// Block with header and transactions
-    pub fn new(header: crate::models::BlockHeader, block_transactions: crate::models::BlockTransactions, ad_proofs: crate::models::BlockAdProofs, extension: crate::models::Extension, size: i32) -> FullBlock {
+    pub fn new(
+        header: crate::models::BlockHeader,
+        block_transactions: crate::models::BlockTransactions,
+        ad_proofs: Option<crate::models::BlockAdProofs>,
+        extension: crate::models::Extension,
+        size: i32,
+    ) -> FullBlock {
         FullBlock {
             header: Box::new(header),
             block_transactions: Box::new(block_transactions),
@@ -39,5 +43,3 @@ impl FullBlock {
         }
     }
 }
-
-

@@ -1,76 +1,81 @@
 use std::time::Duration;
 
-use ergo_node_client::apis::{blocks_api, configuration::Configuration};
-use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, instrument};
-
 use crate::types::work_object::WorkBlock;
+use ergo_node_client::apis::{blocks_api, configuration::Configuration};
+use futures::StreamExt;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{debug, error, instrument};
 
 #[instrument]
 pub async fn fetch_transactions(
     node_conf: &Configuration,
-    receiver: async_channel::Receiver<WorkBlock>,
+    mut receiver: Receiver<Vec<WorkBlock>>,
     sender: Sender<WorkBlock>,
 ) {
-    loop {
-        let work_block_res = receiver.recv().await;
-        match work_block_res {
-            Ok(work_block) => match work_block.header {
-                Some(header) => {
-                    if work_block.zmq_mode {
-                        debug!("fetch_transactions: {}", header.id);
-                    }
-                    if header.height % 1000 == 0 {
-                        debug!(
-                            "Transaction channel size: {}",
-                            (&sender.max_capacity() - &sender.capacity())
-                        );
-                    }
-                    let mut success = false;
-                    while !success {
-                        let transactions_res = blocks_api::get_block_transactions_by_id(
-                            &node_conf,
-                            header.id.as_str(),
-                        )
-                        .await;
-                        match transactions_res {
-                            Ok(transactions) => {
+    while let Some(work_blocks) = receiver.recv().await {
+        let first_work_block = work_blocks.first().unwrap();
+        match first_work_block.header.clone() {
+            Some(header) => {
+                if first_work_block.zmq_mode {
+                    debug!("fetch_transactions: {}", header.id);
+                }
+                let mut success = false;
+                while !success {
+                    let full_blocks_res = blocks_api::get_full_block_by_ids(
+                        &node_conf,
+                        work_blocks
+                            .iter()
+                            .map(|wb| wb.header.clone().unwrap().id)
+                            .collect(),
+                    )
+                    .await;
+                    match full_blocks_res {
+                        Ok(full_blocks) => {
+                            let mut block_stream = async_std::stream::from_iter(full_blocks);
+                            while let Some(block) = block_stream.next().await {
                                 match sender
                                     .send(WorkBlock {
-                                        zmq_mode: work_block.zmq_mode,
-                                        header: Some(header.clone()),
-                                        transactions: Some(transactions.transactions.clone()),
-                                        rollback_height: work_block.rollback_height,
+                                        zmq_mode: first_work_block.zmq_mode,
+                                        header: Some(*block.header.clone()),
+                                        transactions: Some(
+                                            block.block_transactions.transactions.clone(),
+                                        ),
+                                        rollback_height: None,
                                     })
                                     .await
                                 {
                                     Ok(_) => (),
                                     Err(e) => panic!("{}", e),
                                 }
+                            }
 
-                                success = true;
-                            }
-                            Err(e) => {
-                                error!("{}", e);
-                                tokio::time::sleep(Duration::new(1, 0)).await;
-                            }
+                            success = true;
+                        }
+                        Err(e) => {
+                            error!("{}", e);
+                            tokio::time::sleep(Duration::new(1, 0)).await;
                         }
                     }
                 }
-                None => match sender
-                    .send(WorkBlock {
-                        zmq_mode: work_block.zmq_mode,
-                        header: None,
-                        transactions: None,
-                        rollback_height: work_block.rollback_height,
-                    })
-                    .await
-                {
-                    Ok(_) => (),
-                    Err(e) => panic!("{}", e),
-                },
+                if header.height % 1000 == 0 {
+                    debug!(
+                        "Transaction channel size: {}",
+                        (&sender.max_capacity() - &sender.capacity())
+                    );
+                }
+            }
+            None => match sender
+                .send(WorkBlock {
+                    zmq_mode: first_work_block.zmq_mode,
+                    header: None,
+                    transactions: None,
+                    rollback_height: first_work_block.rollback_height,
+                })
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => panic!("{}", e),
             },
-            Err(e) => panic!("{}", e),
         }
     }
 }

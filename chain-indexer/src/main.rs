@@ -1,3 +1,5 @@
+#![deny(unused_crate_dependencies)]
+
 extern crate reqwest;
 
 pub mod actors;
@@ -22,7 +24,6 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::actors::data_inserter::insert_data;
 use crate::actors::header_fetcher::fetch_headers;
-use crate::actors::transaction_collector::collect_transactions;
 use crate::actors::transaction_fetcher::fetch_transactions;
 use crate::database::CIDatabase;
 use crate::settings::Settings;
@@ -36,8 +37,7 @@ async fn main() -> Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
     info!("Creating channels");
-    let (header_tx, header_rx) = async_channel::bounded(32);
-    let (transaction_data_tx, transaction_data_rx) = mpsc::channel(32);
+    let (header_tx, header_rx) = mpsc::channel(32);
     let (blockchain_data_tx, blockchain_data_rx) = mpsc::channel(32);
 
     info!("Node configuration");
@@ -143,23 +143,11 @@ async fn main() -> Result<()> {
         insert_data(blockchain_data_rx).await;
     });
 
+    let node_conf_tx = node_conf.clone();
+    let blockchain_data_tx_cl = blockchain_data_tx.clone();
     tokio::spawn(async move {
-        collect_transactions(
-            current_max_db_height + 1,
-            transaction_data_rx,
-            blockchain_data_tx,
-        )
-        .await;
+        fetch_transactions(&node_conf_tx, header_rx, blockchain_data_tx_cl).await;
     });
-
-    for _ in 0..settings.chain_indexer.tx_par {
-        let node_conf_tx = node_conf.clone();
-        let header_rx_cl = header_rx.clone();
-        let transaction_data_tx_cl = transaction_data_tx.clone();
-        tokio::spawn(async move {
-            fetch_transactions(&node_conf_tx, header_rx_cl, transaction_data_tx_cl).await;
-        });
-    }
 
     tokio::spawn(async move {
         fetch_headers(
