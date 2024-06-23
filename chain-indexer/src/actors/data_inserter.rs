@@ -255,7 +255,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                             )
                                             .unwrap()
                                             .template_bytes()
-                                            .unwrap(),
+                                            .unwrap_or(Vec::<u8>::new()),
                                         )),
                                         ergotree_hash: "".to_owned(),
                                         address: NetworkAddress::new(
