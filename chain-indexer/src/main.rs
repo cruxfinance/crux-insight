@@ -16,8 +16,8 @@ use ergo_lib::ergotree_ir::ergo_tree::ErgoTree;
 use ergo_lib::ergotree_ir::serialization::SigmaSerializable;
 use ergo_node_client::apis::configuration::Configuration;
 use ergo_node_client::apis::{info_api, utxo_api};
-use sea_orm::Set;
 use sea_orm::{ActiveModelTrait, EntityTrait, QueryOrder};
+use sea_orm::{ConnectionTrait, Set};
 use tokio::sync::mpsc::{self};
 use tracing::{info, instrument, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -137,6 +137,21 @@ async fn main() -> Result<()> {
         };
         erg_token.insert(&db).await?;
         current_max_db_height = 0;
+        let _ = db
+            .execute_unprepared(
+                "
+            alter table public.asset_in_box set unlogged;
+            alter table public.token_in_box set unlogged;
+            alter table public.wrapped set unlogged;
+            alter table public.tokens set unlogged;
+            alter table public.boxes set unlogged;
+            alter table public.inputs set unlogged;
+            alter table public.transactions set unlogged;
+            alter table public.blocks set unlogged;
+            alter table public.addresses set unlogged;
+        ",
+            )
+            .await;
     }
 
     let thr = tokio::spawn(async move {

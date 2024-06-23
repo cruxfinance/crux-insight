@@ -13,8 +13,8 @@ use ergo_lib::ergotree_ir::{
 };
 use futures::SinkExt;
 use sea_orm::{
-    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter,
-    QueryOrder, Set, TransactionTrait, Value,
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel,
+    QueryFilter, QueryOrder, Set, TransactionTrait, Value,
 };
 use tmq::{publish, Context};
 use tokio::sync::mpsc::Receiver;
@@ -90,7 +90,27 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
         _ => 0,
     };
 
+    let mut first_zmq: bool = true;
+
     while let Some(work_block) = receiver.recv().await {
+        if work_block.zmq_mode && first_zmq {
+            first_zmq = false;
+            let _ = db
+                .execute_unprepared(
+                    "
+                    alter table public.addresses set logged;
+                    alter table public.blocks set logged;
+                    alter table public.transactions set logged;
+                    alter table public.inputs set logged;
+                    alter table public.boxes set logged;
+                    alter table public.tokens set logged;
+                    alter table public.wrapped set logged;
+                    alter table public.token_in_box set logged;
+                    alter table public.asset_in_box set logged; 
+        ",
+                )
+                .await;
+        }
         match work_block.rollback_height {
             Some(rollback_height) => {
                 let _ = entities::blocks::Entity::delete_many()
