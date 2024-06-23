@@ -229,6 +229,14 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                     current_address_id += 1;
                                     let new_address = entities::addresses::Model {
                                         ergotree: outp.ergo_tree.to_owned(),
+                                        ergotree_template: Some(hex::encode(
+                                            &ErgoTree::sigma_parse_bytes(
+                                                &hex::decode(outp.ergo_tree.to_owned()).unwrap(),
+                                            )
+                                            .unwrap()
+                                            .template_bytes()
+                                            .unwrap(),
+                                        )),
                                         ergotree_hash: "".to_owned(),
                                         address: NetworkAddress::new(
                                             NetworkPrefix::Mainnet,
