@@ -155,6 +155,7 @@ CREATE TABLE public.addresses (
     address text NOT NULL,
     ergotree text NOT NULL,
     ergotree_hash text NOT NULL
+    ergotree_template text NULL,
 );
 
 
@@ -529,6 +530,8 @@ CREATE INDEX idx_addresses_address ON public.addresses USING hash (address);
 
 CREATE INDEX idx_addresses_ergotree ON public.addresses USING hash (ergotree);
 
+
+CREATE INDEX addresses_ergotree_template_idx ON public.addresses USING hash (ergotree_template);
 
 --
 -- Name: idx_asset_in_box__box_id; Type: INDEX; Schema: public; Owner: postgres
