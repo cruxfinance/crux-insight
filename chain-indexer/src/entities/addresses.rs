@@ -14,7 +14,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub ergotree_hash: String,
     #[sea_orm(column_type = "Text")]
-    pub ergotree_template: String,
+    pub ergotree_template: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
