@@ -97,6 +97,9 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                     .filter(entities::blocks::Column::Height.gt(rollback_height))
                     .exec(&db)
                     .await;
+                address_cached.cache_clear();
+                box_cached.cache_clear();
+                token_cached.cache_clear();
                 current_box_id = match entities::boxes::Entity::find()
                     .order_by_desc(entities::boxes::Column::Id)
                     .one(&db)
@@ -219,10 +222,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                 .unwrap()
                             {
                                 Some(m) => {
-                                    if !work_block.zmq_mode {
-                                        address_cached
-                                            .cache_set(m.ergotree.to_owned(), m.to_owned());
-                                    }
+                                    address_cached.cache_set(m.ergotree.to_owned(), m.to_owned());
                                     m.to_owned()
                                 }
                                 None => {
@@ -253,12 +253,10 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                         id: current_address_id,
                                     };
                                     new_addresses.push(new_address.to_owned().into_active_model());
-                                    if !work_block.zmq_mode {
-                                        address_cached.cache_set(
-                                            new_address.ergotree.to_owned(),
-                                            new_address.to_owned(),
-                                        );
-                                    }
+                                    address_cached.cache_set(
+                                        new_address.ergotree.to_owned(),
+                                        new_address.to_owned(),
+                                    );
                                     new_address
                                 }
                             },
@@ -290,10 +288,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                     .unwrap()
                                 {
                                     Some(t) => {
-                                        if !work_block.zmq_mode {
-                                            token_cached
-                                                .cache_set(t.token_id.to_owned(), t.to_owned());
-                                        }
+                                        token_cached.cache_set(t.token_id.to_owned(), t.to_owned());
                                         t.to_owned()
                                     }
                                     None => {
@@ -381,12 +376,10 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                             id: current_token_id,
                                         };
                                         new_tokens.push(new_token.to_owned().into_active_model());
-                                        if !work_block.zmq_mode {
-                                            token_cached.cache_set(
-                                                new_token.token_id.to_owned(),
-                                                new_token.to_owned(),
-                                            );
-                                        }
+                                        token_cached.cache_set(
+                                            new_token.token_id.to_owned(),
+                                            new_token.to_owned(),
+                                        );
                                         new_token
                                     }
                                 },

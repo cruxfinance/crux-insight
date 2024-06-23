@@ -154,8 +154,8 @@ CREATE TABLE public.addresses (
     id bigint NOT NULL,
     address text NOT NULL,
     ergotree text NOT NULL,
-    ergotree_hash text NOT NULL
-    ergotree_template text NULL,
+    ergotree_hash text NOT NULL,
+    ergotree_template text NULL
 );
 
 
