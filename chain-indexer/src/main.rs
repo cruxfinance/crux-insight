@@ -18,6 +18,7 @@ use ergo_node_client::apis::configuration::Configuration;
 use ergo_node_client::apis::{info_api, utxo_api};
 use sea_orm::{ActiveModelTrait, EntityTrait, QueryOrder};
 use sea_orm::{ConnectionTrait, Set};
+use time as _;
 use tokio::sync::mpsc::{self};
 use tracing::{info, instrument, Level};
 use tracing_subscriber::FmtSubscriber;
