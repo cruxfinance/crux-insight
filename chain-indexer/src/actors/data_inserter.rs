@@ -327,7 +327,8 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                                 {
                                                     Ok(r) => from_utf8(r.as_slice())
                                                         .unwrap_or("")
-                                                        .to_owned(),
+                                                        .to_owned()
+                                                        .replace("\u{00}", ""),
                                                     Err(_error) => "".to_owned(),
                                                 }
                                             }
@@ -348,7 +349,8 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                                                     {
                                                         Ok(r) => from_utf8(r.as_slice())
                                                             .unwrap_or("")
-                                                            .to_owned(),
+                                                            .to_owned()
+                                                            .replace("\u{00}", ""),
                                                         Err(_error) => "".to_owned(),
                                                     }
                                                 }
