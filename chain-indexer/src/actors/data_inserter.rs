@@ -106,7 +106,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                     alter table public.tokens set logged;
                     alter table public.wrapped set logged;
                     alter table public.token_in_box set logged;
-                    alter table public.asset_in_box set logged; 
+                    alter table public.asset_in_box set logged;
         ",
                 )
                 .await;
@@ -114,7 +114,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
         match work_block.rollback_height {
             Some(rollback_height) => {
                 let _ = entities::blocks::Entity::delete_many()
-                    .filter(entities::blocks::Column::Height.gt(rollback_height))
+                    .filter(entities::blocks::Column::Height.gte(rollback_height))
                     .exec(&db)
                     .await;
                 address_cached.cache_clear();
@@ -195,7 +195,10 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                         .expect("Expected NaiveDateTime")),
                     header: Set(serde_json::json!(header)),
                 };
-                let _ = block.insert(&tx).await;
+                match block.insert(&tx).await {
+                    Ok(_) => (),
+                    Err(e) => panic!("Failed to insert block at height {}: {}", header.height, e),
+                };
                 for ergotx in transactions.iter() {
                     current_transaction_id += 1;
                     let transaction = entities::transactions::Model {
