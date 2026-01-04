@@ -113,10 +113,18 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
         }
         match work_block.rollback_height {
             Some(rollback_height) => {
-                let _ = entities::blocks::Entity::delete_many()
+                info!("Processing rollback to height: {}", rollback_height);
+                match entities::blocks::Entity::delete_many()
                     .filter(entities::blocks::Column::Height.gte(rollback_height))
                     .exec(&db)
-                    .await;
+                    .await
+                {
+                    Ok(result) => info!("Rollback deleted {} blocks", result.rows_affected),
+                    Err(e) => panic!(
+                        "Failed to execute rollback to height {}: {}",
+                        rollback_height, e
+                    ),
+                };
                 address_cached.cache_clear();
                 box_cached.cache_clear();
                 token_cached.cache_clear();
