@@ -115,7 +115,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
             Some(rollback_height) => {
                 info!("Processing rollback to height: {}", rollback_height);
                 match entities::blocks::Entity::delete_many()
-                    .filter(entities::blocks::Column::Height.gte(rollback_height))
+                    .filter(entities::blocks::Column::Height.gt(rollback_height))
                     .exec(&db)
                     .await
                 {
