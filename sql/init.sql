@@ -56,21 +56,21 @@ RETURN QUERY
 WITH liquidity_pool as (
 	select * from spectrum.spectrum_boxes where box_id = (select max(box_id) from spectrum.spectrum_boxes where quote_id = t_id) order by erg_value desc limit 1
 )
-select row_to_json(t_info.*) 
+select row_to_json(t_info.*)
 from (
-select 
+select
 	t_amount as token_amount,
 	ARRAY(SELECT public.get_wrapped_tokens(
 		t.id,
 		t_amount
 	)) as wrapped_tokens,
-	t.*, 
+	t.*,
 	coalesce(
 		case when t_id = 0 then 1 else null end,
 		(lp.base_amount/10^9)/(lp.quote_amount/10^t.decimals),
 		0
 	) as value_in_erg
-from	
+from
 public.tokens t
 left join liquidity_pool lp on lp.quote_id = t.id
 where t.id = t_id
@@ -98,7 +98,7 @@ with non_circ as (
 	,'MUbV38YgqHy7XbsoXWF5z7EZm524Ybdwe5p9WDrbhruZRtehkRPT92imXer2eTkjwPDfboa1pR3zb3deVKVq3H7Xt98qcTqLuSBSbHb7izzo5jphEpcnqyKJ2xhmpNPVvmtbdJNdvdopPrHHDBbAGGeW7XYTQwEeoRfosXzcDtiGgw97b2aqjTsNFmZk7khBEQywjYfmoDc9nUCJMZ3vbSspnYo3LarLe55mh2Np8MNJqUN9APA6XkhZCrTTDRZb1B4krgFY1sVMswg2ceqguZRvC9pqt3tUUxmSnB24N6dowfVJKhLXwHPbrkHViBv1AKAJTmEaQW2DN1fRmD9ypXxZk8GXmYtxTtrj3BiunQ4qzUCu1eGzxSREjpkFSi2ATLSSDqUwxtRz639sHM6Lav4axoJNPCHbY8pvuBKUxgnGRex8LEGM8DeEJwaJCaoy8dBw9Lz49nq5mSsXLeoC4xpTUmp47Bh7GAZtwkaNreCu74m9rcZ8Di4w1cmdsiK1NWuDh9pJ2Bv7u3EfcurHFVqCkT3P86JUbKnXeNxCypfrWsFuYNKYqmjsix82g9vWcGMmAcu5nagxD4iET86iE2tMMfZZ5vqZNvntQswJyQqv2Wc6MTh4jQx1q2qJZCQe4QdEK63meTGbZNNKMctHQbp3gRkZYNrBtxQyVtNLR8xEY8zGp85GeQKbb37vqLXxRpGiigAdMe3XZA4hhYPmAAU5hpSMYaRAjtvvMT3bNiHRACGrfjvSsEG9G2zY5in2YWz5X9zXQLGTYRsQ4uNFkYoQRCBdjNxGv6R58Xq74zCgt19TxYZ87gPWxkXpWwTaHogG1eps8WXt8QzwJ9rVx6Vu9a5GjtcGsQxHovWmYixgBU8X9fPNJ9UQhYyAWbjtRSuVBtDAmoV1gCBEPwnYVP5GCGhCocbwoYhZkZjFZy6ws4uxVLid3FxuvhWvQrVEDYp7WRvGXbNdCbcSXnbeTrPMey1WPaXX'
 	)
 )
-select 
+select
 sum(case when addr_type = 0 then token_amount else 0 end)::bigint as non_circulating_supply,
 sum(case when addr_type = 1 then token_amount else 0 end)::bigint as liquid_supply,
 sum(case when addr_type = 2 then token_amount else 0 end)::bigint as locked_supply
@@ -108,7 +108,7 @@ select aib.*,
 when length(a.address) = 51 and starts_with(a.address, '9') then 1
 else 2
 end) as addr_type
-from public.asset_in_box aib 
+from public.asset_in_box aib
 join public.addresses a on a.id = aib.address
 where aib.token_id = t_id
 and aib.spent is null
@@ -729,3 +729,75 @@ ALTER TABLE ONLY public.wrapped
 --
 -- PostgreSQL database dump complete
 --
+
+
+--
+-- Mempool Tables
+--
+
+-- Mempool transactions
+CREATE TABLE public.mempool_transactions (
+    id BIGSERIAL PRIMARY KEY,
+    transaction_id TEXT NOT NULL UNIQUE,
+    data JSONB NOT NULL,
+    first_seen TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_mempool_tx_id ON public.mempool_transactions USING hash (transaction_id);
+
+-- Mempool boxes (outputs)
+CREATE TABLE public.mempool_boxes (
+    id BIGSERIAL PRIMARY KEY,
+    box_id TEXT NOT NULL UNIQUE,
+    address BIGINT NOT NULL,
+    data JSONB NOT NULL,
+    mempool_transaction_id BIGINT NOT NULL REFERENCES public.mempool_transactions(id) ON DELETE CASCADE,
+    output_index INTEGER NOT NULL
+);
+
+CREATE INDEX idx_mempool_boxes_box_id ON public.mempool_boxes USING hash (box_id);
+CREATE INDEX idx_mempool_boxes_address ON public.mempool_boxes USING btree (address);
+CREATE INDEX idx_mempool_boxes_tx_id ON public.mempool_boxes USING btree (mempool_transaction_id);
+
+-- Mempool inputs
+CREATE TABLE public.mempool_inputs (
+    id BIGSERIAL PRIMARY KEY,
+    mempool_transaction_id BIGINT NOT NULL REFERENCES public.mempool_transactions(id) ON DELETE CASCADE,
+    box_id TEXT NOT NULL,
+    confirmed_box_id BIGINT,
+    spending_proof JSONB NOT NULL,
+    index INTEGER NOT NULL
+);
+
+CREATE INDEX idx_mempool_inputs_box_id ON public.mempool_inputs USING hash (box_id);
+CREATE INDEX idx_mempool_inputs_tx_id ON public.mempool_inputs USING btree (mempool_transaction_id);
+CREATE INDEX idx_mempool_inputs_confirmed ON public.mempool_inputs USING btree (confirmed_box_id) WHERE confirmed_box_id IS NOT NULL;
+
+-- Mempool tokens (for tokens minted in mempool)
+CREATE TABLE public.mempool_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    token_id TEXT NOT NULL UNIQUE,
+    token_name TEXT,
+    token_description TEXT,
+    decimals INTEGER,
+    minted BIGINT,
+    issuer_box BIGINT NOT NULL REFERENCES public.mempool_boxes(id) ON DELETE CASCADE,
+    issuance_box BIGINT NOT NULL REFERENCES public.mempool_boxes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_mempool_tokens_token_id ON public.mempool_tokens USING hash (token_id);
+
+-- Mempool tokens in boxes
+CREATE TABLE public.mempool_token_in_box (
+    id BIGSERIAL PRIMARY KEY,
+    mempool_box_id BIGINT NOT NULL REFERENCES public.mempool_boxes(id) ON DELETE CASCADE,
+    token_id BIGINT,
+    mempool_token_id BIGINT,
+    token_id_str TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    index INTEGER NOT NULL,
+    CONSTRAINT chk_mempool_token_ref CHECK (token_id IS NOT NULL OR mempool_token_id IS NOT NULL)
+);
+
+CREATE INDEX idx_mempool_tib_box ON public.mempool_token_in_box USING btree (mempool_box_id);
+CREATE INDEX idx_mempool_tib_token_str ON public.mempool_token_in_box USING hash (token_id_str);

@@ -32,11 +32,29 @@ pub struct Crux {
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
+pub struct Mempool {
+    pub enabled: bool,
+    pub full_resync_interval: i32,
+}
+
+impl Default for Mempool {
+    fn default() -> Self {
+        Mempool {
+            enabled: true,
+            full_resync_interval: 10,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
 pub struct Settings {
     pub database: Database,
     pub ergo_node: ErgoNode,
     pub chain_indexer: ChainIndexer,
     pub crux: Crux,
+    #[serde(default)]
+    pub mempool: Mempool,
 }
 
 impl Settings {

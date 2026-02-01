@@ -22,3 +22,4 @@ tracing-subscriber = "0.3.17"
 config = "0.13.3"
 async-std = "1.12.0"
 time = "0.3.36"
+migration = { path = "../migration" }

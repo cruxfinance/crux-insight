@@ -1,8 +1,10 @@
 [workspace]
+resolver = "2"
 
 members = [
     "chain-indexer",
-    "ergo-node-client"
+    "ergo-node-client",
+    "migration"
 ]
 
 [workspace.package]

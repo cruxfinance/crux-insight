@@ -16,6 +16,7 @@ use ergo_lib::ergotree_ir::ergo_tree::ErgoTree;
 use ergo_lib::ergotree_ir::serialization::SigmaSerializable;
 use ergo_node_client::apis::configuration::Configuration;
 use ergo_node_client::apis::{info_api, utxo_api};
+use migration::{Migrator, MigratorTrait};
 use sea_orm::{ActiveModelTrait, EntityTrait, QueryOrder};
 use sea_orm::{ConnectionTrait, Set};
 use time as _;
@@ -25,9 +26,13 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::actors::data_inserter::insert_data;
 use crate::actors::header_fetcher::fetch_headers;
+use crate::actors::mempool_inserter::mempool_inserter;
+use crate::actors::mempool_listener::mempool_listener;
 use crate::actors::transaction_fetcher::fetch_transactions;
+use crate::actors::zmq_publisher::zmq_publisher;
 use crate::database::CIDatabase;
 use crate::settings::Settings;
+use crate::types::mempool_work::MempoolWork;
 
 #[instrument]
 #[tokio::main]
@@ -40,6 +45,7 @@ async fn main() -> Result<()> {
     info!("Creating channels");
     let (header_tx, header_rx) = mpsc::channel(32);
     let (blockchain_data_tx, blockchain_data_rx) = mpsc::channel(32);
+    let (mempool_tx, mempool_rx) = mpsc::channel(100);
 
     info!("Node configuration");
     let node_conf = Configuration {
@@ -52,6 +58,10 @@ async fn main() -> Result<()> {
     }
     .connect()
     .await;
+
+    info!("Running database migrations");
+    Migrator::up(&db, None).await?;
+    info!("Migrations complete");
 
     info!("Getting current max db height");
     let mut current_max_db_height = blocks::Entity::find()
@@ -155,8 +165,28 @@ async fn main() -> Result<()> {
             .await;
     }
 
+    // Spawn ZMQ publisher actor
+    let (zmq_tx, zmq_rx) = mpsc::channel(100);
+    let zmq_bind_address = format!("tcp://0.0.0.0:{}", &settings.crux.pubsubport);
+    tokio::spawn(async move {
+        zmq_publisher(zmq_rx, zmq_bind_address).await;
+    });
+
+    // Clone mempool sender for data_inserter (only if mempool is enabled)
+    let mempool_sender_for_inserter = if settings.mempool.enabled {
+        Some(mempool_tx.clone())
+    } else {
+        None
+    };
+
+    let zmq_sender_for_inserter = zmq_tx.clone();
     let thr = tokio::spawn(async move {
-        insert_data(blockchain_data_rx).await;
+        insert_data(
+            blockchain_data_rx,
+            mempool_sender_for_inserter,
+            zmq_sender_for_inserter,
+        )
+        .await;
     });
 
     let node_conf_tx = node_conf.clone();
@@ -165,15 +195,51 @@ async fn main() -> Result<()> {
         fetch_transactions(&node_conf_tx, header_rx, blockchain_data_tx_cl).await;
     });
 
+    let node_conf_headers = node_conf.clone();
     tokio::spawn(async move {
         fetch_headers(
-            &node_conf,
+            &node_conf_headers,
             current_max_db_height,
             current_max_node_height,
             header_tx,
         )
         .await;
     });
+
+    // Spawn mempool actors if enabled AND already synced
+    // During initial sync, mempool tracking would conflict with data_inserter
+    let is_synced = current_max_db_height >= current_max_node_height - 1;
+    if settings.mempool.enabled && is_synced {
+        info!("Starting mempool tracking (already synced)");
+        let resync_interval = settings.mempool.full_resync_interval;
+
+        // Connect to database for mempool inserter
+        let mempool_db = CIDatabase {
+            settings: settings.to_owned(),
+        }
+        .connect()
+        .await;
+
+        let node_conf_mempool_inserter = node_conf.clone();
+        let zmq_sender_for_mempool = zmq_tx.clone();
+        tokio::spawn(async move {
+            mempool_inserter(
+                mempool_rx,
+                node_conf_mempool_inserter,
+                mempool_db,
+                resync_interval,
+                zmq_sender_for_mempool,
+            )
+            .await;
+        });
+
+        let node_conf_mempool_listener = node_conf.clone();
+        tokio::spawn(async move {
+            mempool_listener(mempool_tx, node_conf_mempool_listener).await;
+        });
+    } else if settings.mempool.enabled {
+        info!("Mempool tracking disabled during initial sync - restart after sync completes");
+    }
 
     let _ = thr.await;
 

@@ -11,18 +11,23 @@ use ergo_lib::ergotree_ir::{
     mir::constant::TryExtractInto,
     serialization::SigmaSerializable,
 };
-use futures::SinkExt;
 use sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel,
     QueryFilter, QueryOrder, Set, TransactionTrait, Value,
 };
-use tmq::{publish, Context};
 use tokio::sync::mpsc::Receiver;
 use tracing::info;
 
-use crate::{database::CIDatabase, entities, settings::Settings, types::work_object::WorkBlock};
+use crate::{
+    actors::zmq_publisher::ZmqMessage, database::CIDatabase, entities, settings::Settings,
+    types::mempool_work::MempoolWork, types::work_object::WorkBlock,
+};
 
-pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
+pub async fn insert_data(
+    mut receiver: Receiver<WorkBlock>,
+    mempool_sender: Option<tokio::sync::mpsc::Sender<MempoolWork>>,
+    zmq_sender: tokio::sync::mpsc::Sender<ZmqMessage>,
+) {
     let settings = Settings::new().unwrap();
     let mut address_cached: SizedCache<String, entities::addresses::Model> =
         SizedCache::with_size(100000);
@@ -34,10 +39,6 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
     }
     .connect()
     .await;
-
-    let mut socket = publish(&Context::new())
-        .bind(&format!("tcp://0.0.0.0:{}", &settings.crux.pubsubport))
-        .unwrap();
 
     let mut current_time = SystemTime::now();
 
@@ -191,6 +192,7 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                 let mut new_tokens = Vec::<entities::tokens::ActiveModel>::new();
                 let mut new_tokens_in_box = Vec::<entities::token_in_box::ActiveModel>::new();
                 let mut new_addresses = Vec::<entities::addresses::ActiveModel>::new();
+                let mut confirmed_tx_ids = Vec::<String>::new();
 
                 let header = work_block.header.unwrap();
                 let transactions = work_block.transactions.unwrap();
@@ -209,8 +211,10 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                 };
                 for ergotx in transactions.iter() {
                     current_transaction_id += 1;
+                    let tx_id_str = ergotx.id.to_owned().unwrap();
+                    confirmed_tx_ids.push(tx_id_str.clone());
                     let transaction = entities::transactions::Model {
-                        transaction_id: ergotx.id.to_owned().unwrap(),
+                        transaction_id: tx_id_str,
                         height: header.height,
                         id: current_transaction_id,
                     };
@@ -519,7 +523,19 @@ pub async fn insert_data(mut receiver: Receiver<WorkBlock>) {
                         "Inserted block with height: {} and header: {}",
                         header.height, header.id
                     );
-                    let _ = socket.send(vec!["new_block", &header.id]).await;
+                    let _ = zmq_sender
+                        .send(("new_block".to_string(), header.id.to_string()))
+                        .await;
+
+                    // Send mempool cleanup signal
+                    if let Some(ref mp_sender) = mempool_sender {
+                        let _ = mp_sender
+                            .send(MempoolWork::BlockConfirmed {
+                                block_height: header.height,
+                                confirmed_tx_ids,
+                            })
+                            .await;
+                    }
                 }
             }
         }
