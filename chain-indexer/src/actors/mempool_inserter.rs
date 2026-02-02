@@ -111,17 +111,13 @@ async fn insert_mempool_transaction(
                             let (token_name, token_desc, decimals) =
                                 extract_token_metadata(&output.additional_registers);
 
-                            // Find the issuer box (first input)
-                            let issuer_box_id =
-                                resolve_confirmed_box_id(&db_tx, &asset.token_id).await?;
-
                             let new_mempool_token = mempool_tokens::ActiveModel {
                                 token_id: Set(asset.token_id.clone()),
                                 token_name: Set(token_name),
                                 token_description: Set(token_desc),
                                 decimals: Set(decimals),
                                 minted: Set(Some(asset.amount)),
-                                issuer_box: Set(issuer_box_id.unwrap_or(inserted_box.id)),
+                                issuer_box: Set(asset.token_id.clone()),
                                 issuance_box: Set(inserted_box.id),
                                 ..Default::default()
                             };

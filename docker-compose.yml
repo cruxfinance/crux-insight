@@ -16,6 +16,7 @@ services:
     image: postgres:15
     container_name: cruxinsight-db
     env_file: .env
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
     volumes:
       - ./pdata/data:/var/lib/postgresql/data
       - ./sql/postgresql.conf:/etc/postgresql/postgresql.conf

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::types::work_object::WorkBlock;
 use ergo_node_client::apis::{blocks_api, configuration::Configuration};
@@ -19,6 +19,7 @@ pub async fn fetch_transactions(
                 if first_work_block.zmq_mode {
                     debug!("fetch_transactions: {}", header.id);
                 }
+                let fetch_start = Instant::now();
                 let mut success = false;
                 while !success {
                     let full_blocks_res = blocks_api::get_full_block_by_ids(
@@ -61,6 +62,13 @@ pub async fn fetch_transactions(
                     debug!(
                         "Transaction channel size: {}",
                         (&sender.max_capacity() - &sender.capacity())
+                    );
+                }
+                if first_work_block.zmq_mode || header.height % 100 == 0 {
+                    debug!(
+                        "fetch_transactions batch at height {} took {:?}",
+                        header.height,
+                        fetch_start.elapsed()
                     );
                 }
             }

@@ -781,7 +781,7 @@ CREATE TABLE public.mempool_tokens (
     token_description TEXT,
     decimals INTEGER,
     minted BIGINT,
-    issuer_box BIGINT NOT NULL REFERENCES public.mempool_boxes(id) ON DELETE CASCADE,
+    issuer_box TEXT NOT NULL,
     issuance_box BIGINT NOT NULL REFERENCES public.mempool_boxes(id) ON DELETE CASCADE
 );
 

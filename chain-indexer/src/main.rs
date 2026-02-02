@@ -6,6 +6,7 @@ pub mod actors;
 mod database;
 pub mod entities;
 mod settings;
+pub mod sync_indexes;
 pub mod types;
 
 use anyhow::Result;
@@ -26,8 +27,6 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::actors::data_inserter::insert_data;
 use crate::actors::header_fetcher::fetch_headers;
-use crate::actors::mempool_inserter::mempool_inserter;
-use crate::actors::mempool_listener::mempool_listener;
 use crate::actors::transaction_fetcher::fetch_transactions;
 use crate::actors::zmq_publisher::zmq_publisher;
 use crate::database::CIDatabase;
@@ -77,6 +76,8 @@ async fn main() -> Result<()> {
         .full_height
         .expect("Could not fetch full height from node");
     info!("{}", current_max_node_height);
+
+    let mut saved_indexes: Option<sync_indexes::SavedIndexes> = None;
 
     if current_max_db_height == -1 {
         info!("Inserting genesis block");
@@ -148,21 +149,11 @@ async fn main() -> Result<()> {
         };
         erg_token.insert(&db).await?;
         current_max_db_height = 0;
-        let _ = db
-            .execute_unprepared(
-                "
-            alter table public.asset_in_box set unlogged;
-            alter table public.token_in_box set unlogged;
-            alter table public.wrapped set unlogged;
-            alter table public.tokens set unlogged;
-            alter table public.boxes set unlogged;
-            alter table public.inputs set unlogged;
-            alter table public.transactions set unlogged;
-            alter table public.blocks set unlogged;
-            alter table public.addresses set unlogged;
-        ",
-            )
-            .await;
+        // Drop non-essential indexes and foreign keys during initial sync
+        // Keep only: PKs, idx_boxes_box_id, idx_addresses_ergotree, idz_tokens_token_id (needed for cache-miss lookups)
+        info!("Dropping non-essential indexes and foreign keys for initial sync");
+        saved_indexes = Some(sync_indexes::drop_sync_indexes(&db).await);
+        info!("Non-essential indexes and foreign keys dropped");
     }
 
     // Spawn ZMQ publisher actor
@@ -180,11 +171,21 @@ async fn main() -> Result<()> {
     };
 
     let zmq_sender_for_inserter = zmq_tx.clone();
+    let node_conf_inserter = node_conf.clone();
+    let mempool_enabled = settings.mempool.enabled;
+    let mempool_resync_interval = settings.mempool.full_resync_interval;
+    let mempool_tx_clone = mempool_tx.clone();
     let thr = tokio::spawn(async move {
         insert_data(
             blockchain_data_rx,
             mempool_sender_for_inserter,
             zmq_sender_for_inserter,
+            saved_indexes,
+            node_conf_inserter,
+            mempool_enabled,
+            mempool_resync_interval,
+            Some(mempool_rx),
+            mempool_tx_clone,
         )
         .await;
     });
@@ -205,41 +206,6 @@ async fn main() -> Result<()> {
         )
         .await;
     });
-
-    // Spawn mempool actors if enabled AND already synced
-    // During initial sync, mempool tracking would conflict with data_inserter
-    let is_synced = current_max_db_height >= current_max_node_height - 1;
-    if settings.mempool.enabled && is_synced {
-        info!("Starting mempool tracking (already synced)");
-        let resync_interval = settings.mempool.full_resync_interval;
-
-        // Connect to database for mempool inserter
-        let mempool_db = CIDatabase {
-            settings: settings.to_owned(),
-        }
-        .connect()
-        .await;
-
-        let node_conf_mempool_inserter = node_conf.clone();
-        let zmq_sender_for_mempool = zmq_tx.clone();
-        tokio::spawn(async move {
-            mempool_inserter(
-                mempool_rx,
-                node_conf_mempool_inserter,
-                mempool_db,
-                resync_interval,
-                zmq_sender_for_mempool,
-            )
-            .await;
-        });
-
-        let node_conf_mempool_listener = node_conf.clone();
-        tokio::spawn(async move {
-            mempool_listener(mempool_tx, node_conf_mempool_listener).await;
-        });
-    } else if settings.mempool.enabled {
-        info!("Mempool tracking disabled during initial sync - restart after sync completes");
-    }
 
     let _ = thr.await;
 

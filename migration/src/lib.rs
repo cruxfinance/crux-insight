@@ -11,6 +11,7 @@ mod m000008_create_asset_in_box;
 mod m000009_create_wrapped;
 mod m000010_create_functions;
 mod m000011_create_mempool_tables;
+mod m000012_alter_mempool_tokens_issuer;
 
 pub struct Migrator;
 
@@ -29,6 +30,7 @@ impl MigratorTrait for Migrator {
             Box::new(m000009_create_wrapped::Migration),
             Box::new(m000010_create_functions::Migration),
             Box::new(m000011_create_mempool_tables::Migration),
+            Box::new(m000012_alter_mempool_tokens_issuer::Migration),
         ]
     }
 }

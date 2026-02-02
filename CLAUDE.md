@@ -19,6 +19,10 @@ Core blockchain indexer for Crux Finance. See [../CLAUDE.md](../CLAUDE.md) for f
 - SeaORM for PostgreSQL
 - ZeroMQ tmq for pub/sub
 
+## Building
+
+- Always build via `docker compose` — native builds will fail due to ZMQ C++ dependencies
+
 ## Dependencies
 
 - Requires indexed Ergo node with ZMQ publisher enabled

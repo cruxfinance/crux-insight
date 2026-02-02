@@ -15,20 +15,13 @@ pub struct Model {
     pub token_description: Option<String>,
     pub decimals: Option<i32>,
     pub minted: Option<i64>,
-    pub issuer_box: i64,
+    #[sea_orm(column_type = "Text")]
+    pub issuer_box: String,
     pub issuance_box: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(
-        belongs_to = "super::mempool_boxes::Entity",
-        from = "Column::IssuerBox",
-        to = "super::mempool_boxes::Column::Id",
-        on_update = "Cascade",
-        on_delete = "Cascade"
-    )]
-    IssuerBox,
     #[sea_orm(
         belongs_to = "super::mempool_boxes::Entity",
         from = "Column::IssuanceBox",
@@ -43,7 +36,7 @@ pub enum Relation {
 
 impl Related<super::mempool_boxes::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::IssuerBox.def()
+        Relation::IssuanceBox.def()
     }
 }
 

@@ -1,4 +1,7 @@
-use std::{cmp::min, time::Duration};
+use std::{
+    cmp::min,
+    time::{Duration, Instant},
+};
 
 use ergo_node_client::apis::{blocks_api, configuration::Configuration};
 use futures::StreamExt;
@@ -42,11 +45,19 @@ pub async fn fetch_headers(
     let mut offset = from;
     let limit = 10;
     while offset < to {
+        let fetch_start = Instant::now();
         let headers_res =
             blocks_api::get_chain_slice(&node_conf, Some(offset), Some(min(offset + limit, to)))
                 .await;
         match headers_res {
             Ok(headers) => {
+                if offset % 100 == 0 {
+                    debug!(
+                        "fetch_headers at {} took {:?}",
+                        offset,
+                        fetch_start.elapsed()
+                    );
+                }
                 offset += headers.len() as i32;
                 if headers.first().unwrap().parent_id == last_header_id {
                     last_header_id = headers.last().unwrap().id.clone();
