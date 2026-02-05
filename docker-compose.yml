@@ -16,6 +16,7 @@ services:
     image: postgres:15
     container_name: cruxinsight-db
     env_file: .env
+    stop_grace_period: 60s
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     volumes:
       - ./pdata/data:/var/lib/postgresql/data

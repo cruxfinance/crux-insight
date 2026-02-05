@@ -133,7 +133,9 @@ pub async fn recreate_sync_indexes(db: &DatabaseConnection, saved: &SavedIndexes
     // Recreate indexes (use CONCURRENTLY to avoid blocking reads, but not inside a transaction)
     for idx in &saved.indexes {
         info!("Recreating index: {}", idx.indexname);
-        let _ = db.execute_unprepared(&idx.indexdef).await;
+        if let Err(e) = db.execute_unprepared(&idx.indexdef).await {
+            panic!("Failed to recreate index {}: {}", idx.indexname, e);
+        }
     }
 
     // Recreate FK constraints
@@ -143,7 +145,9 @@ pub async fn recreate_sync_indexes(db: &DatabaseConnection, saved: &SavedIndexes
             fk.table_name, fk.conname, fk.definition
         );
         info!("Recreating FK: {}", fk.conname);
-        let _ = db.execute_unprepared(&sql).await;
+        if let Err(e) = db.execute_unprepared(&sql).await {
+            panic!("Failed to recreate FK {}: {}", fk.conname, e);
+        }
     }
 
     info!("All indexes and foreign keys recreated");
