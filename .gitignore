@@ -13,3 +13,5 @@ data/
 
 .env
 local.toml
+.claude/
+.opencode/
