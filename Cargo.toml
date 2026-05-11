@@ -12,3 +12,5 @@ edition = "2021"
 
 [workspace.dependencies]
 ergo-node-client = { version = "^5.0.12", path = "./ergo-node-client" }
+sentry = { version = "0.46", default-features = false, features = ["backtrace", "contexts", "panic", "transport", "debug-images", "rustls", "tracing"] }
+sentry-tracing = "0.46"

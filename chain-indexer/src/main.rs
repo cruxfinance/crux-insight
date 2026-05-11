@@ -24,6 +24,7 @@ use time as _;
 use tokio::sync::mpsc::{self};
 use tracing::{info, instrument, Level};
 use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::prelude::*;
 
 use crate::actors::data_inserter::insert_data;
 use crate::actors::header_fetcher::fetch_headers;
@@ -34,13 +35,46 @@ use crate::settings::Settings;
 use crate::types::mempool_work::MempoolWork;
 
 #[instrument]
-#[tokio::main]
-async fn main() -> Result<()> {
-    let settings = Settings::new().unwrap();
+fn main() -> Result<()> {
+    let _sentry_guard = sentry::init((
+        std::env::var("SENTRY_DSN").ok(),
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            traces_sample_rate: std::env::var("SENTRY_TRACES_SAMPLE_RATE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0),
+            environment: Some(
+                std::env::var("SENTRY_ENVIRONMENT")
+                    .unwrap_or_else(|_| {
+                        if cfg!(debug_assertions) {
+                            "development".into()
+                        } else {
+                            "production".into()
+                        }
+                    })
+                    .into(),
+            ),
+            ..Default::default()
+        },
+    ));
+
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
-        .finish();
+        .finish()
+        .with(sentry_tracing::layer());
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async_main())
+}
+
+#[instrument]
+async fn async_main() -> Result<()> {
+    let settings = Settings::new().unwrap();
     info!("Creating channels");
     let (header_tx, header_rx) = mpsc::channel(32);
     let (blockchain_data_tx, blockchain_data_rx) = mpsc::channel(32);
