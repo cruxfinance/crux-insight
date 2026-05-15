@@ -289,6 +289,13 @@ pub async fn insert_data(
                     Some(m) => m.id,
                     None => 0,
                 };
+
+                // Notify downstream consumers of the rollback so they can reset
+                // their processing cursors. Sending after all deletes + counter
+                // resets ensures consumers see the database in its post-rollback state.
+                let _ = zmq_sender
+                    .send(("rollback".to_string(), rollback_height.to_string()))
+                    .await;
             }
             None => {
                 let processing_start = Instant::now();
