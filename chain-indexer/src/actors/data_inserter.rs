@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     str::from_utf8,
-    time::{Instant, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use cached::{Cached, SizedCache};
@@ -16,16 +16,17 @@ use ergo_lib::ergotree_ir::{
     serialization::SigmaSerializable,
 };
 use sea_orm::{
-    sea_query::Expr, ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, IntoActiveModel,
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, IntoActiveModel,
     QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait, Value,
 };
 use tokio::sync::mpsc::Receiver;
-use tracing::info;
+use tracing::{error, info};
 
 use ergo_node_client::apis::configuration::Configuration;
 
 use crate::{
     actors::mempool_inserter::mempool_inserter, actors::mempool_listener::mempool_listener,
+    actors::supervisor::{retry_db, spawn_critical},
     actors::zmq_publisher::ZmqMessage, database::CIDatabase, entities, settings::Settings,
     sync_indexes::SavedIndexes, types::mempool_work::MempoolWork, types::work_object::WorkBlock,
 };
@@ -167,7 +168,7 @@ pub async fn insert_data(
                     let node_conf_inserter = node_conf.clone();
                     let zmq_sender_mempool = zmq_sender.clone();
                     let resync_interval = mempool_resync_interval;
-                    tokio::spawn(async move {
+                    spawn_critical("mempool_inserter", async move {
                         mempool_inserter(
                             rx,
                             node_conf_inserter,
@@ -180,9 +181,15 @@ pub async fn insert_data(
 
                     let node_conf_listener = node_conf.clone();
                     let mempool_tx_clone = mempool_tx.clone();
-                    tokio::spawn(async move {
+                    spawn_critical("mempool_listener", async move {
                         mempool_listener(mempool_tx_clone, node_conf_listener).await;
                     });
+
+                    // Reconcile the DB mempool with the node before the first
+                    // block confirmation is processed.
+                    if let Err(e) = mempool_tx.send(MempoolWork::FullResync).await {
+                        error!("Failed to request startup mempool resync: {}", e);
+                    }
                 }
             }
         }
@@ -221,14 +228,18 @@ pub async fn insert_data(
                 }
 
                 info!("Processing rollback to height: {}", rollback_height);
-                match entities::blocks::Entity::delete_many()
-                    .filter(entities::blocks::Column::Height.gt(rollback_height))
-                    .exec(&db)
-                    .await
+                // The cascade delete can deadlock against ci-modules inserting
+                // rows that reference `boxes`; retry with backoff before giving up.
+                match retry_db("rollback delete", 5, Duration::from_millis(500), || {
+                    entities::blocks::Entity::delete_many()
+                        .filter(entities::blocks::Column::Height.gt(rollback_height))
+                        .exec(&db)
+                })
+                .await
                 {
                     Ok(result) => info!("Rollback deleted {} blocks", result.rows_affected),
                     Err(e) => panic!(
-                        "Failed to execute rollback to height {}: {}",
+                        "Failed to execute rollback to height {} after retries: {}",
                         rollback_height, e
                     ),
                 };

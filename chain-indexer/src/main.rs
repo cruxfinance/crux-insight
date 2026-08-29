@@ -19,7 +19,7 @@ use ergo_node_client::apis::configuration::Configuration;
 use ergo_node_client::apis::{info_api, utxo_api};
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ActiveModelTrait, EntityTrait, QueryOrder};
-use sea_orm::{ConnectionTrait, Set};
+use sea_orm::Set;
 use time as _;
 use tokio::sync::mpsc::{self};
 use tracing::{info, instrument, Level};
@@ -27,12 +27,12 @@ use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::prelude::*;
 
 use crate::actors::data_inserter::insert_data;
+use crate::actors::supervisor::spawn_critical;
 use crate::actors::header_fetcher::fetch_headers;
 use crate::actors::transaction_fetcher::fetch_transactions;
 use crate::actors::zmq_publisher::zmq_publisher;
 use crate::database::CIDatabase;
 use crate::settings::Settings;
-use crate::types::mempool_work::MempoolWork;
 
 #[instrument]
 fn main() -> Result<()> {
@@ -193,7 +193,7 @@ async fn async_main() -> Result<()> {
     // Spawn ZMQ publisher actor
     let (zmq_tx, zmq_rx) = mpsc::channel(100);
     let zmq_bind_address = format!("tcp://0.0.0.0:{}", &settings.crux.pubsubport);
-    tokio::spawn(async move {
+    spawn_critical("zmq_publisher", async move {
         zmq_publisher(zmq_rx, zmq_bind_address).await;
     });
 
@@ -209,7 +209,7 @@ async fn async_main() -> Result<()> {
     let mempool_enabled = settings.mempool.enabled;
     let mempool_resync_interval = settings.mempool.full_resync_interval;
     let mempool_tx_clone = mempool_tx.clone();
-    let thr = tokio::spawn(async move {
+    let inserter = spawn_critical("insert_data", async move {
         insert_data(
             blockchain_data_rx,
             mempool_sender_for_inserter,
@@ -226,12 +226,12 @@ async fn async_main() -> Result<()> {
 
     let node_conf_tx = node_conf.clone();
     let blockchain_data_tx_cl = blockchain_data_tx.clone();
-    tokio::spawn(async move {
+    spawn_critical("fetch_transactions", async move {
         fetch_transactions(&node_conf_tx, header_rx, blockchain_data_tx_cl).await;
     });
 
     let node_conf_headers = node_conf.clone();
-    tokio::spawn(async move {
+    spawn_critical("fetch_headers", async move {
         fetch_headers(
             &node_conf_headers,
             current_max_db_height,
@@ -241,7 +241,9 @@ async fn async_main() -> Result<()> {
         .await;
     });
 
-    let _ = thr.await;
+    // Every actor is supervised: if any of them stops, spawn_critical exits
+    // the process with status 1 and docker restarts the container.
+    let _ = inserter.await;
 
     Ok(())
 }

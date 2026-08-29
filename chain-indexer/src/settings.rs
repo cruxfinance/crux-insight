@@ -22,6 +22,14 @@ pub struct Database {
 #[allow(unused)]
 pub struct ChainIndexer {
     pub tx_par: i32,
+    /// Seconds without a `newBlock` ZMQ event before the header fetcher checks
+    /// the node via REST and recreates its subscription (default 600).
+    #[serde(default = "default_zmq_timeout_secs")]
+    pub zmq_timeout_secs: u64,
+}
+
+fn default_zmq_timeout_secs() -> u64 {
+    600
 }
 
 #[derive(Debug, Deserialize, Clone)]

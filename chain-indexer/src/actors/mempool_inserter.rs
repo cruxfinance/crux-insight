@@ -1,16 +1,14 @@
 use std::str::from_utf8;
 
 use chrono::Utc;
-use ergo_lib::ergotree_ir::{
-    chain::ergo_box::RegisterValue, mir::constant::TryExtractInto, serialization::SigmaSerializable,
-};
+use ergo_lib::ergotree_ir::{chain::ergo_box::RegisterValue, mir::constant::TryExtractInto};
 use ergo_node_client::{
     apis::{configuration::Configuration, transactions_api},
     models::ErgoTransaction,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, IntoActiveModel, QueryFilter,
-    QueryOrder, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
+    QueryFilter, Set, Statement, TransactionTrait,
 };
 use std::collections::HashSet;
 use tokio::sync::mpsc::Receiver;
@@ -246,6 +244,10 @@ fn extract_token_metadata(
     (token_name, token_desc, decimals)
 }
 
+/// Maximum number of values per `IN (...)` list. sqlx/Postgres allow at most
+/// 65,535 bind parameters per statement; exceeding it is an assertion panic.
+const IS_IN_CHUNK: usize = 5_000;
+
 /// Handle block confirmation - remove confirmed and invalidated transactions
 async fn handle_block_confirmed(
     db: &DatabaseConnection,
@@ -254,60 +256,43 @@ async fn handle_block_confirmed(
     let db_tx = db.begin().await?;
 
     // 1. Delete confirmed transactions from mempool (CASCADE handles related records)
-    if !confirmed_tx_ids.is_empty() {
+    let mut removed_confirmed = 0;
+    for chunk in confirmed_tx_ids.chunks(IS_IN_CHUNK) {
         let delete_result = mempool_transactions::Entity::delete_many()
-            .filter(mempool_transactions::Column::TransactionId.is_in(confirmed_tx_ids.clone()))
+            .filter(mempool_transactions::Column::TransactionId.is_in(chunk.iter().cloned()))
             .exec(&db_tx)
             .await?;
+        removed_confirmed += delete_result.rows_affected;
+    }
+    if removed_confirmed > 0 {
         info!(
             "Removed {} confirmed transactions from mempool",
-            delete_result.rows_affected
+            removed_confirmed
         );
     }
 
-    // 2. Find and delete invalidated transactions (those spending now-spent boxes)
-    // Get all box_ids referenced by mempool inputs
-    let mempool_input_box_ids: Vec<String> = mempool_inputs::Entity::find()
-        .all(&db_tx)
-        .await?
-        .into_iter()
-        .map(|i| i.box_id)
-        .collect();
-
-    if !mempool_input_box_ids.is_empty() {
-        // Find which of these boxes are now spent (confirmed)
-        let spent_boxes: Vec<String> = entities::boxes::Entity::find()
-            .filter(entities::boxes::Column::BoxId.is_in(mempool_input_box_ids))
-            .filter(entities::boxes::Column::Spent.is_not_null())
-            .all(&db_tx)
-            .await?
-            .into_iter()
-            .map(|b| b.box_id)
-            .collect();
-
-        if !spent_boxes.is_empty() {
-            // Find mempool transactions that reference these spent boxes
-            let invalidated_tx_ids: Vec<i64> = mempool_inputs::Entity::find()
-                .filter(mempool_inputs::Column::BoxId.is_in(spent_boxes))
-                .all(&db_tx)
-                .await?
-                .into_iter()
-                .map(|i| i.mempool_transaction_id)
-                .collect::<HashSet<_>>()
-                .into_iter()
-                .collect();
-
-            if !invalidated_tx_ids.is_empty() {
-                let delete_result = mempool_transactions::Entity::delete_many()
-                    .filter(mempool_transactions::Column::Id.is_in(invalidated_tx_ids))
-                    .exec(&db_tx)
-                    .await?;
-                info!(
-                    "Removed {} invalidated transactions from mempool",
-                    delete_result.rows_affected
-                );
-            }
-        }
+    // 2. Delete invalidated transactions (those spending now-spent boxes) in a
+    // single server-side statement. The previous implementation loaded every
+    // mempool input and fed them back as `IN (...)` lists, which panicked once
+    // the table grew past 65,535 rows (CRUX-INSIGHT-4).
+    let invalidated = db_tx
+        .execute(Statement::from_string(
+            DbBackend::Postgres,
+            "DELETE FROM mempool_transactions \
+             WHERE id IN ( \
+                 SELECT DISTINCT mi.mempool_transaction_id \
+                 FROM mempool_inputs mi \
+                 JOIN boxes b ON b.box_id = mi.box_id \
+                 WHERE b.spent IS NOT NULL \
+             )"
+                .to_string(),
+        ))
+        .await?;
+    if invalidated.rows_affected() > 0 {
+        info!(
+            "Removed {} invalidated transactions from mempool",
+            invalidated.rows_affected()
+        );
     }
 
     db_tx.commit().await?;
@@ -348,14 +333,15 @@ async fn full_mempool_resync(
     // 3. Remove transactions that are no longer in node's mempool
     let to_remove: Vec<String> = db_tx_ids.difference(&node_tx_ids).cloned().collect();
     if !to_remove.is_empty() {
-        let delete_result = mempool_transactions::Entity::delete_many()
-            .filter(mempool_transactions::Column::TransactionId.is_in(to_remove.clone()))
-            .exec(db)
-            .await?;
-        info!(
-            "Resync removed {} stale transactions from mempool",
-            delete_result.rows_affected
-        );
+        let mut removed = 0;
+        for chunk in to_remove.chunks(IS_IN_CHUNK) {
+            let delete_result = mempool_transactions::Entity::delete_many()
+                .filter(mempool_transactions::Column::TransactionId.is_in(chunk.iter().cloned()))
+                .exec(db)
+                .await?;
+            removed += delete_result.rows_affected;
+        }
+        info!("Resync removed {} stale transactions from mempool", removed);
     }
 
     // 4. Add transactions that are in node but not in our DB
@@ -404,24 +390,23 @@ pub async fn mempool_inserter(
                 confirmed_tx_ids,
             } => {
                 debug!("Block {} confirmed, cleaning up mempool", block_height);
-                if let Err(e) = handle_block_confirmed(&db, confirmed_tx_ids).await {
-                    error!("Failed to handle block confirmation: {}", e);
-                }
-                let _ = zmq_sender
-                    .send(("mempool_sync".to_string(), String::new()))
-                    .await;
 
-                // Check if we need a full resync
+                // Periodic full resync runs BEFORE the confirmation cleanup so
+                // the tables are reconciled with the node first.
                 blocks_since_resync += 1;
                 if blocks_since_resync >= resync_interval {
                     blocks_since_resync = 0;
                     if let Err(e) = full_mempool_resync(&node_conf, &db).await {
                         error!("Failed to perform full mempool resync: {}", e);
                     }
-                    let _ = zmq_sender
-                        .send(("mempool_sync".to_string(), String::new()))
-                        .await;
                 }
+
+                if let Err(e) = handle_block_confirmed(&db, confirmed_tx_ids).await {
+                    error!("Failed to handle block confirmation: {}", e);
+                }
+                let _ = zmq_sender
+                    .send(("mempool_sync".to_string(), String::new()))
+                    .await;
             }
             MempoolWork::FullResync => {
                 blocks_since_resync = 0;
