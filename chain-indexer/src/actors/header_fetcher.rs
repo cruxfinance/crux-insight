@@ -150,10 +150,14 @@ async fn handle_fork(
     );
     sleep(Duration::from_secs(2)).await;
 
-    if let Ok(recheck) =
-        blocks_api::get_chain_slice(node_conf, Some(state.offset), Some(state.offset + 1)).await
+    if let Ok(recheck) = blocks_api::get_chain_slice(
+        node_conf,
+        Some(state.offset),
+        Some(state.offset + SLICE_LIMIT),
+    )
+    .await
     {
-        if let Some(first) = recheck.first() {
+        if let Some(first) = recheck.iter().find(|h| h.id != state.last_header_id) {
             if first.parent_id == state.last_header_id {
                 info!(
                     "Parent mismatch at height {} was transient; continuing",
@@ -226,7 +230,13 @@ async fn handle_fork(
 /// Hands a chain slice downstream. Contiguous headers are sent as one batch;
 /// on a parent mismatch the batch so far is flushed, the fork is handled and
 /// the remainder of the slice is dropped (the caller re-fetches from the new
-/// cursor).
+/// cursor). Returns `Ok(true)` if the cursor moved (new headers or a rollback)
+/// and `Ok(false)` if the slice contained nothing new.
+///
+/// The node's `/blocks/chainSlice` is exclusive of `fromHeight` — except when
+/// `fromHeight` is the best height, in which case it returns the tip itself.
+/// Headers we already hold are therefore skipped rather than treated as forks
+/// (the old code turned every such response into a spurious rollback).
 async fn process_slice(
     node_conf: &Configuration,
     settings: &Settings,
@@ -234,19 +244,27 @@ async fn process_slice(
     sender: &Sender<Vec<WorkBlock>>,
     headers: Vec<BlockHeader>,
     zmq_mode: bool,
-) -> SendResult {
+) -> Result<bool, ()> {
     let mut batch = Vec::with_capacity(headers.len());
+    let mut advanced = false;
     for header in headers {
+        if header.id == state.last_header_id {
+            debug!("Skipping already-indexed header {} at {}", header.id, header.height);
+            continue;
+        }
         if header.parent_id == state.last_header_id {
             state.last_header_id = header.id.clone();
             state.offset = header.height;
             batch.push(work_block(header, zmq_mode));
+            advanced = true;
         } else {
             send_work(sender, std::mem::take(&mut batch)).await?;
-            return handle_fork(node_conf, settings, state, sender, &header, zmq_mode).await;
+            handle_fork(node_conf, settings, state, sender, &header, zmq_mode).await?;
+            return Ok(true);
         }
     }
-    send_work(sender, batch).await
+    send_work(sender, batch).await?;
+    Ok(advanced)
 }
 
 /// Pulls headers from the node via REST from `state.offset` until the node has
@@ -276,7 +294,10 @@ async fn sync_via_rest(
         if headers.is_empty() {
             return Ok(());
         }
-        process_slice(node_conf, settings, state, sender, headers, true).await?;
+        if !process_slice(node_conf, settings, state, sender, headers, true).await? {
+            // Only already-indexed headers came back: caught up.
+            return Ok(());
+        }
     }
 }
 
@@ -347,11 +368,18 @@ pub async fn fetch_headers(
                     );
                     break;
                 }
-                if process_slice(node_conf, &settings, &mut state, &sender, headers, false)
+                match process_slice(node_conf, &settings, &mut state, &sender, headers, false)
                     .await
-                    .is_err()
                 {
-                    return;
+                    Ok(true) => {}
+                    Ok(false) => {
+                        info!(
+                            "Node returned nothing new above {} (target {}); switching to zmq mode",
+                            state.offset, to
+                        );
+                        break;
+                    }
+                    Err(()) => return,
                 }
             }
             Err(e) => {
@@ -485,6 +513,70 @@ mod tests {
         let node = HashMap::from([(5, "e"), (6, "f'")]);
         let db = HashMap::from([(5, "e")]); // height 6 missing in DB
         assert_eq!(find_fork_height(6, 100, lookup(node), lookup(db)).await, Some(5));
+    }
+
+    fn header(height: i32, id: &str, parent: &str) -> BlockHeader {
+        BlockHeader {
+            height,
+            id: id.to_string(),
+            parent_id: parent.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn test_env() -> (Configuration, Settings, Sender<Vec<WorkBlock>>, tokio::sync::mpsc::Receiver<Vec<WorkBlock>>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        (Configuration::default(), test_settings(), tx, rx)
+    }
+
+    fn test_settings() -> Settings {
+        serde_json::from_value(serde_json::json!({
+            "database": {"user": "", "password": "", "host": "", "port": "", "db": ""},
+            "ergo_node": {"url": "", "zmq_url": ""},
+            "chain_indexer": {"tx_par": 1},
+            "crux": {"pubsubport": 0}
+        }))
+        .expect("test settings")
+    }
+
+    #[tokio::test]
+    async fn slice_containing_only_the_held_tip_is_not_progress() {
+        let (conf, settings, tx, mut rx) = test_env();
+        let mut state = FetchState {
+            offset: 100,
+            last_header_id: "tip".to_string(),
+        };
+        let advanced = process_slice(&conf, &settings, &mut state, &tx, vec![header(100, "tip", "p")], true)
+            .await
+            .unwrap();
+        assert!(!advanced);
+        assert_eq!(state.offset, 100);
+        assert_eq!(state.last_header_id, "tip");
+        assert!(rx.try_recv().is_err(), "nothing must be sent");
+    }
+
+    #[tokio::test]
+    async fn held_tip_is_skipped_and_new_headers_are_batched() {
+        let (conf, settings, tx, mut rx) = test_env();
+        let mut state = FetchState {
+            offset: 100,
+            last_header_id: "tip".to_string(),
+        };
+        let headers = vec![
+            header(100, "tip", "p"),
+            header(101, "a", "tip"),
+            header(102, "b", "a"),
+        ];
+        let advanced = process_slice(&conf, &settings, &mut state, &tx, headers, true)
+            .await
+            .unwrap();
+        assert!(advanced);
+        assert_eq!(state.offset, 102);
+        assert_eq!(state.last_header_id, "b");
+        let batch = rx.try_recv().expect("one batch sent");
+        let heights: Vec<i32> = batch.iter().map(|w| w.header.as_ref().unwrap().height).collect();
+        assert_eq!(heights, vec![101, 102]);
+        assert!(batch.iter().all(|w| w.zmq_mode && w.rollback_height.is_none()));
     }
 
     #[tokio::test]
