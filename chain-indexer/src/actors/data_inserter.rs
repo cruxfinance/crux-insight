@@ -120,6 +120,11 @@ pub async fn insert_data(
 
     let mut first_zmq: bool = true;
     let mut mempool_rx = mempool_rx;
+    // Height of the last block processed, used to detect gaps (a block
+    // silently skipped upstream) or reordering. `None` until the first block
+    // after startup, and reset by every rollback so the next block only has
+    // to continue from the rollback target.
+    let mut last_processed_height: Option<i32> = None;
 
     // Batch accumulation vectors
     let mut batch_blocks = Vec::<entities::blocks::ActiveModel>::new();
@@ -307,6 +312,10 @@ pub async fn insert_data(
                 let _ = zmq_sender
                     .send(("rollback".to_string(), rollback_height.to_string()))
                     .await;
+
+                // The next block processed must continue from the rollback
+                // target, not from whatever height preceded the rollback.
+                last_processed_height = Some(rollback_height);
             }
             None => {
                 let processing_start = Instant::now();
@@ -318,6 +327,16 @@ pub async fn insert_data(
                 let header = work_block.header.unwrap();
                 let transactions = work_block.transactions.unwrap();
                 let is_zmq = work_block.zmq_mode;
+
+                if let Some(prev) = last_processed_height {
+                    if header.height != prev + 1 {
+                        panic!(
+                            "block continuity violation: got height {} after {} (a block was skipped or reordered upstream)",
+                            header.height, prev
+                        );
+                    }
+                }
+                last_processed_height = Some(header.height);
 
                 if batch_count == 0 {
                     batch_first_height = header.height;
@@ -854,7 +873,7 @@ async fn flush_batch(
 
     let db_insert_elapsed = db_insert_start.elapsed();
     let commit_start = Instant::now();
-    let _ = tx.commit().await;
+    tx.commit().await.expect("batch DB commit failed");
     let commit_elapsed = commit_start.elapsed();
     let batch_elapsed = batch_start.elapsed();
 
