@@ -57,7 +57,7 @@ async fn get_header_id(settings: &Settings, height: i32) -> Option<String> {
 
 /// Best-chain header id the node has at `height` (first element of
 /// `/blocks/at/{height}`), with a few retries for transient REST errors.
-async fn node_best_header_id(node_conf: &Configuration, height: i32) -> Option<String> {
+pub(crate) async fn node_best_header_id(node_conf: &Configuration, height: i32) -> Option<String> {
     for attempt in 1..=3 {
         match blocks_api::get_full_block_at(node_conf, height).await {
             Ok(ids) => return ids.into_iter().next(),
