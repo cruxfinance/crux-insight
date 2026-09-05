@@ -25,3 +25,6 @@ time = "0.3.36"
 migration = { path = "../migration" }
 sentry.workspace = true
 sentry-tracing.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
