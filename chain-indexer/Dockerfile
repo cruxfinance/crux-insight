@@ -45,6 +45,7 @@ WORKDIR /app
 
 # Copy the compiled binaries from the builder stage
 COPY --from=builder /app/target/release/chain-indexer /app/
+COPY --from=builder /app/target/release/backfill_templates /app/
 COPY --from=builder /app/config /app/config
 COPY --from=builder /app/local.toml /app/local.toml
 

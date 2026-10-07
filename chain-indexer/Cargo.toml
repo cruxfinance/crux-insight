@@ -13,7 +13,9 @@ serde = { version = "1.0.171", features = ["derive"]}
 serde_json = "1.0.102"
 tokio = { version = "1", features = ["full"] }
 ergo-node-client = { workspace = true }
-ergo-lib = "0.28.0"
+# Upstream sigma-rust `develop` (0.29.0, unreleased): ErgoTree v3 template support.
+# Switch back to `ergo-lib = "0.29.0"` once it is published to crates.io.
+ergo-lib = { git = "https://github.com/ergoplatform/sigma-rust", rev = "1633e01835d48e4d4b127f7478e602e129e80110" }
 hex = "0.4.3"
 cached = "0.44.0"
 tmq = "0.4.0"
