@@ -4,6 +4,9 @@ extern crate reqwest;
 
 pub mod actors;
 mod database;
+mod ergotree_template;
+#[cfg(test)]
+mod ergotree_template_tests;
 pub mod entities;
 mod settings;
 pub mod sync_indexes;

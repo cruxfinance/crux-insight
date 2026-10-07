@@ -25,6 +25,7 @@ use tracing::{error, info};
 use ergo_node_client::apis::configuration::Configuration;
 
 use crate::{
+    ergotree_template::template_hex_for_tree,
     actors::mempool_inserter::mempool_inserter, actors::mempool_listener::mempool_listener,
     actors::supervisor::{retry_db, spawn_critical},
     actors::zmq_publisher::ZmqMessage, database::CIDatabase, entities, settings::Settings,
@@ -500,25 +501,17 @@ pub async fn insert_data(
                             None => {
                                 // Not in DB either — create new address
                                 current_address_id += 1;
+                                let tree = ErgoTree::sigma_parse_bytes(
+                                    &hex::decode(outp.ergo_tree.to_owned()).unwrap(),
+                                )
+                                .unwrap();
                                 let new_address = entities::addresses::Model {
                                     ergotree: outp.ergo_tree.to_owned(),
-                                    ergotree_template: Some(hex::encode(
-                                        &ErgoTree::sigma_parse_bytes(
-                                            &hex::decode(outp.ergo_tree.to_owned()).unwrap(),
-                                        )
-                                        .unwrap()
-                                        .template_bytes()
-                                        .unwrap_or(Vec::<u8>::new()),
-                                    )),
+                                    ergotree_template: Some(template_hex_for_tree(&tree)),
                                     ergotree_hash: "".to_owned(),
                                     address: NetworkAddress::new(
                                         NetworkPrefix::Mainnet,
-                                        &Address::recreate_from_ergo_tree(
-                                            &ErgoTree::sigma_parse_bytes(
-                                                &hex::decode(outp.ergo_tree.to_owned()).unwrap(),
-                                            )
-                                            .unwrap(),
-                                        )
+                                        &Address::recreate_from_ergo_tree(&tree)
                                         .unwrap(),
                                     )
                                     .to_base58(),

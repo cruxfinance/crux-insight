@@ -1,5 +1,5 @@
 # Stage 1: Build the Rust project
-FROM rust:slim-bullseye as builder
+FROM rust:slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y pkg-config openssl libssl-dev build-essential
 
@@ -37,7 +37,7 @@ COPY . .
 RUN cargo build --release --package chain-indexer
 
 # Stage 2: Create the final lightweight image
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y ca-certificates openssl libssl-dev
 
@@ -45,6 +45,7 @@ WORKDIR /app
 
 # Copy the compiled binaries from the builder stage
 COPY --from=builder /app/target/release/chain-indexer /app/
+COPY --from=builder /app/target/release/backfill_templates /app/
 COPY --from=builder /app/config /app/config
 COPY --from=builder /app/local.toml /app/local.toml
 
